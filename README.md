@@ -66,7 +66,7 @@ Windows only: the plugin targets `net462` and WPF (Playnite's own extension targ
   baseline: [the release workflow](.github/workflows/release.yml) rewrites the manifest it packages,
   and a local build keeps the repo value unless you pass `-Version` to `tools/Build-Release.ps1`.
 
-### Cutting a release
+### How a release is produced
 
 [.github/workflows/release.yml](.github/workflows/release.yml) releases every push to `main`
 (also manually, with an explicit version): it resolves the version, builds on `windows-latest`,
@@ -97,6 +97,76 @@ policy. In short: one HTTP entry point (`BaseVrModParser.FetchStringAsync`); `Li
 app-URI schemes, `search-ms:` and credential-bearing URLs never reach the library; automatic
 redirects off, hops followed explicitly, capped, and only onto the host the plugin asked for;
 `robots.txt` respected; response size, volume and pace capped.
+
+## Related projects
+
+Other projects in the same space, in three groups: Playnite add-ons that tag the library the way this
+one does, installers and launchers for the mods themselves, and catalogues that publish the mod lists.
+All are independent codebases written by other people: this repository neither maintains nor audits
+them, and they share none of this plugin's matching code. Links and versions checked 31 October 2026.
+
+### Playnite add-ons that tag the library
+
+These ask the same question this plugin asks — *which games in my library can I play in VR, and with
+what mod?* — and answer it by writing tags and links into the library.
+
+| | [VR Mod Tagger](https://github.com/tmuftee/playnite-vr-mod-tagger) (Talha Muftee) | [PCVR Central Matcher](https://github.com/SW-Fan1138/Playnite-PCVRCentralMatcher) (SW-Fan1138) | VRMod Tags (this plugin) |
+| --- | --- | --- | --- |
+| Extension type | Generic plugin; menu commands per game or per library | PowerShell script extension; one `Sync` menu command | Metadata provider; scans on its own |
+| Sources it reads | Four: PCVR Central, PCVR Gamer, MrSurvivor Installers, PCVR Mods Installer Hub | One: PCVR Central | Twelve, individually toggleable |
+| Built-in VR as its own fact | Yes — a separate `Native VR` tag | Yes — a separate `PCVR-Native` tag | No — mod availability and per-mod quality labels only |
+| Human check before writing | Shows the change list and asks first; optional review for similar-title matches | Applies on Sync; you create the `PCVR-Mod` and `PCVR-Native` tags yourself first | Tags confident matches automatically; everything else waits in the review dialog |
+| Tag vocabulary | `VR Mod`, `Native VR`, optional Quest and per-source tags | `PCVR-Mod`, `PCVR-Native` | `VRMod` plus the source's framework/quality vocabulary |
+| Getting rid of it | **Undo last run** | Stale VR tags are dropped by the next Sync | Clean uninstall removes every tag, link, queued change and setting |
+| State | v0.1.1 (28 Oct 2026), MIT, beta | v1.0.0 (22 Oct 2026), MIT | This repository's **Releases** page, MIT |
+
+Nine of this plugin's twelve sources appear in neither of the other two; **PCVR Gamer** is the only
+source they read that this plugin does not.
+
+Two things worth knowing before you install a second one:
+
+- **Tag vocabularies do not line up.** Each add-on only manages the tags and links it owns, so
+  running two gives you `VRMod` and `VR Mod` and `PCVR-Mod` on the same game, and a link per add-on.
+  Filtering stays usable, but pick one per library if you want one clean vocabulary.
+- **PowerShell extensions are on their way out.** Playnite's own docs state that PowerShell extension
+  support is being removed in Playnite 11
+  ([intro to extensions](https://api.playnite.link/docs/master/tutorials/extensions/intro.html)), so a
+  script-extension add-on needs a C# rewrite to survive the next Playnite major.
+
+Neither this plugin nor either add-on above is listed in Playnite's built-in add-on browser:
+submissions to the official [add-on database](https://github.com/JosefNemec/PlayniteAddonDatabase)
+are on hold until the new portal that ships with Playnite 11 and is backported to 10, so each one is
+installed from its own **Releases** page.
+
+### Mod installers and launchers, not library taggers
+
+A different job, in the same ecosystem: none of these reads a Playnite library or writes a tag. They are
+what you use after a tag has told you a mod exists.
+
+- [**Rai Pal**](https://github.com/Raicuparta/rai-pal) (Raicuparta, GPL-3, Windows and Linux) — finds
+  your installed and owned games across Steam, GOG, Epic, itch and PC Xbox, detects each game's engine
+  and engine version, and installs/updates universal mods (UEVR, UUVR) and their profiles. It answers
+  per game, per machine, and never per library tag. No Playnite integration; a Playnite extension was
+  requested upstream in [rai-pal discussion #115](https://github.com/Raicuparta/rai-pal/discussions/115).
+- [**PCVR Mods Installer Hub**](https://github.com/Mr-Nlce/PCVR-Mods-Installer-Hub) (Mr. Nlce, MIT) —
+  a portable batch installer and launcher with Steam detection. It tags nothing, but its mod list is
+  one of this plugin's twelve sources.
+- [**Unreal Easy Injector**](https://uevrdeluxe.org) ([oduis/UEVRDeluxe](https://github.com/oduis/UEVRDeluxe))
+  — a friendlier front end for UEVR with an online database of profiles and supported games.
+
+### Catalogues this plugin does not read today
+
+Listings rather than add-ons, and candidates for future sources: [UnflatVR](https://unflatvr.com/directory/)
+(flat-to-VR mod directory split by PCVR, Quest and Steam Frame), [MyUEVR](https://myuevr.pages.dev/)
+(UEVR game database and profile catalogue), [UEVR Hub](https://uevr-profiles.github.io/) (community UEVR
+profiles, not a game list). A source joins the plugin when it has a current, scrapeable structure and
+games no other source already covers — see the ranking in [external-references.md](external-references.md).
+
+### Know one this list is missing?
+
+Open an issue or a PR. To belong here a project should read a public VR-mod listing, write tags or
+links into the Playnite library, and publish a public repository with releases — say which sources it
+reads and what tags it writes, so the table stays useful.
 
 ## Contributing
 
