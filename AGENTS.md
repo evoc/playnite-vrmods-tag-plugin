@@ -118,16 +118,19 @@ on, and the warning gates below are run against it).
 - **Releasing (GitHub Actions)** — `.github/workflows/release.yml` runs on
   every push to main on `windows-latest` (net462/WPF builds only on
   Windows): computes the next version from the Conventional Commits since
-  the last tag (config in `GitVersion.yml`: `feat:`→minor, `fix:`/`perf:`
-  →patch, `<type>!:` or `BREAKING CHANGE:`→major; first push without any
+  the last tag (config in `GitVersion.yml`; measured on GitVersion 6.8.2,
+  not inferred from the regexes: one increment per push, patch is the floor
+  — a chore-only push still ships the next patch — and `feat:`→minor or
+  `<type>!:`/`BREAKING CHANGE:`→major escalate it; first push without any
   tag→1.0.0), creates+pushes the tag `v<version>`, runs the full test suite,
   packages with `tools/Build-Release.ps1 -Version <version>`, and attaches
   `dist/VRMod Tags-<version>.pext` to the GitHub Release. **Every push to
   main is a release** — no prereleases; feature branches are built
   locally, never released. Procedure: merge to main with Conventional
-  Commit messages — that's the whole procedure; the commit prefix decides
-  the bump (a wrong prefix silently under-bumps the release; the
-  `commitlint` PR gate in `.github/workflows/commitlint.yml` catches that).
+  Commit messages — that's the whole procedure; the prefix decides whether
+  the release escalates (a `feat:` mislabeled as `fix:`/`chore:` ships a
+  feature inside a patch release; the `commitlint` PR gate in
+  `.github/workflows/commitlint.yml` catches non-conventional headers).
   Manual re-runs: "Run workflow" with an optional explicit version.
   Users install from the repo's Releases page —
   [github.com/evoc/playnite-vrmods-tag-plugin](https://github.com/evoc/playnite-vrmods-tag-plugin).

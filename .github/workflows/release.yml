@@ -1,11 +1,15 @@
 # Release: every push to main is a release.
 #
-# Versioning (Conventional Commits, configured in GitVersion.yml):
+# Versioning (Conventional Commits, configured in GitVersion.yml; measured
+# with the pinned GitVersion 6.8.2 rather than read off the regexes):
 #   - the tag is the version: vX.Y.Z
-#   - the bump comes from the commit messages since the last tag:
-#       fix:/perf: (any scope)     -> patch  (1.0.5 -> 1.0.6)
-#       feat: (any scope)         -> minor  (1.0.6 -> 1.1.0)
-#       <type>!:  or a BREAKING CHANGE: footer -> major (1.x -> 2.0.0)
+#   - exactly one increment per release, however many commits landed since
+#     the last tag: chore + docs + fix together -> patch once, not 3 times
+#   - patch is a floor, not a reward: any commit at all bumps it, so a
+#     chore-only push (a Dependabot merge) still ships a new release
+#   - the commit messages only escalate that floor:
+#       feat: (any scope)                     -> minor (1.0.6 -> 1.1.0)
+#       <type>!: or a BREAKING CHANGE: footer -> major (1.x  -> 2.0.0)
 #   - no prereleases: every push to main is a real, stable release
 #   - feature branches are built locally, never released
 #

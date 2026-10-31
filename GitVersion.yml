@@ -1,9 +1,14 @@
 # GitVersion configuration (GitVersion 6.x reads GitVersion.yml; JSON is not
-# supported). Conventional Commits drive the increment on every push to main
-# (see .github/workflows/release.yml):
-#   fix:/perf:                              -> patch  (1.0.5 -> 1.0.6)
-#   feat: (any scope)                      -> minor  (1.0.6 -> 1.1.0)
-#   <type>! or a BREAKING CHANGE: footer   -> major  (1.x -> 2.0.0)
+# supported). Measured with the pinned GitVersion 6.8.2, not inferred from the
+# regexes below (see .github/workflows/release.yml for the step that consumes
+# MajorMinorPatch):
+#   - one increment per release, however many commits landed since the last
+#     tag: chore + docs + fix together -> 1.0.1, not 1.0.3
+#   - patch is a floor, not a reward - any commit at all bumps it, so a
+#     chore/docs-only push (a Dependabot merge) still releases the next patch
+#   - the messages below only escalate that floor:
+#       feat: (any scope)                      -> minor  (1.0.6 -> 1.1.0)
+#       <type>! or a BREAKING CHANGE: footer   -> major  (1.x  -> 2.0.0)
 major-version-bump-message: "^(build|chore|ci|docs|feat|fix|perf|refactor|\
   revert|style|test)(\\([\\w\\s-,/\\\\]*\\))?(!:|:.*\\n\\n((.+\\n)+\\n)?\
   BREAKING CHANGE:\\s.+)"

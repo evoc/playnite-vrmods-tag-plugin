@@ -58,10 +58,11 @@ Windows only: the plugin targets `net462` and WPF (Playnite's own extension targ
 
 - .NET SDK 8, pinned by [`global.json`](global.json).
 - `PlayniteSDK` 6.15.0 and `GitVersion.MsBuild` 6.8.2 from NuGet.
-- Version comes from git through GitVersion: the nearest tag plus the commits since it, with the
-  bump derived from the Conventional-Commit messages in between ([GitVersion.yml](GitVersion.yml)).
-  A clone with no tags builds from `0.0.0` plus whatever increment its commit
-  messages ask for (this tree, one `chore:` commit: `0.0.1-2`). `extension.yaml` carries `1.0.0` as a
+- Version comes from git through GitVersion: the nearest tag plus the commits since it. GitVersion
+  applies one increment per release, with patch as the floor, and the Conventional-Commit messages
+  decide whether it escalates to minor or major ([GitVersion.yml](GitVersion.yml)).
+  A clone with no tags builds from `0.0.0` plus that one increment, tagged with a prerelease suffix
+  counting the commits (`0.0.1-<n>`). `extension.yaml` carries `1.0.0` as a
   baseline: [the release workflow](.github/workflows/release.yml) rewrites the manifest it packages,
   and a local build keeps the repo value unless you pass `-Version` to `tools/Build-Release.ps1`.
 
@@ -70,9 +71,10 @@ Windows only: the plugin targets `net462` and WPF (Playnite's own extension targ
 [.github/workflows/release.yml](.github/workflows/release.yml) releases every push to `main`
 (also manually, with an explicit version): it resolves the version, builds on `windows-latest`,
 packages the `.pext` users install, tags it `vX.Y.Z`, and publishes the release with the package
-attached. An untagged history resolves to `1.0.0`; after that the bump comes from the
-Conventional-Commit messages since the last tag. Third-party Actions are pinned to full
-commit SHAs, and the job fails if anything in the dependency graph is flagged.
+attached. An untagged history resolves to `1.0.0`; after that every push bumps at least patch — a
+`feat:` takes it to a minor, `<type>!:` or a `BREAKING CHANGE:` footer to a major. Third-party
+Actions are pinned to full commit SHAs, and the job fails if anything in the dependency graph is
+flagged.
 
 ```powershell
 dotnet build -c Release source/Playnite.VRMods.csproj   # the add-on
