@@ -1,0 +1,7 @@
+Id: E4A2F8D1-3B5C-4E9A-A7D6-8F1C0E2B4A6D
+Name: VRMod Tags
+Author: PlayniteVRmods
+Version: 1.0.0
+Module: Playnite.VRMods.dll
+Type: MetadataProvider
+Icon: icon.png

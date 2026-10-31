@@ -1,0 +1,178 @@
+<Window x:Class="Playnite.VRMods.VrModSourceLogDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:Playnite.VRMods"
+        Title="VRMod: Last run"
+        Width="480" Height="360" MinHeight="300"
+        WindowStartupLocation="CenterOwner"
+        ShowInTaskbar="False"
+        ResizeMode="CanResize"
+        Style="{DynamicResource VrLogWindowStyle}">
+    <!--
+        Per-source "last run" log dialog.
+
+        Shows the record of the last scan for one source: when it ran (local time), the
+        result (Success / No data / Failed) with the failure reason on the line directly
+        below it when it failed (HTTP status + text, "request timed out after N s", or the
+        socket cause), how many entries it returned, and a multiline, selectable debug log
+        of the run (every web request with its HTTP status, per-game extraction problems,
+        the apply-phase counts). Log and error are selectable so they can be copied. The
+        debug log is the stretchy element: it fills the window and grows on resize. The
+        data is the in-memory
+        VrModTagSettings.SourceStatus record the tag service keeps per source. It is
+        [DontSerialize], so it resets to "Never scanned" when Playnite restarts — a failed
+        source re-fails on the next scan, so the diagnosis still works.
+
+        Opened from the add-on settings Sources grid: a per-row "Last run" button and a
+        right-click context menu on any row. Read-only: the close button just closes it.
+
+        The window chrome is a close-only clone of the review dialog's VrWindowStyle (the
+        plugin cannot reference Playnite's app assembly, so the chrome is cloned per
+        window). Every brush/font resolves from the active Playnite theme via
+        DynamicResource, so the dialog follows the user's chosen theme like every other
+        Playnite window.
+    -->
+    <Window.Resources>
+        <ResourceDictionary>
+            <!--
+                Close-only clone of the review dialog's VrWindowStyle: the same Playnite
+                window chrome (themed background, 1px border, WindowChrome title bar with
+                the Marlett-glyph close button), minus the minimize/maximize buttons a
+                read-only dialog doesn't need. Every brush and the WindowBarButton style are
+                Playnite theme resources resolved at runtime.
+            -->
+            <Style x:Key="VrLogWindowStyle" TargetType="Window">
+                <Setter Property="Background" Value="{DynamicResource WindowBackgourndBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="TextOptions.TextFormattingMode" Value="Ideal" />
+                <Setter Property="TextOptions.TextRenderingMode" Value="Auto" />
+                <Setter Property="WindowChrome.WindowChrome">
+                    <Setter.Value>
+                        <WindowChrome CaptionHeight="25" CornerRadius="0" ResizeBorderThickness="4"
+                                      NonClientFrameEdges="None" UseAeroCaptionButtons="False" GlassFrameThickness="0"/>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="{x:Type Window}">
+                            <AdornerDecorator>
+                                <Border x:Name="WindowBorder" BorderBrush="{DynamicResource PopupBorderBrush}" CornerRadius="0"
+                                        BorderThickness="{TemplateBinding BorderThickness}"
+                                        Background="{TemplateBinding Background}">
+                                    <Grid>
+                                        <ContentPresenter Margin="0,25,0,0"/>
+                                        <DockPanel DockPanel.Dock="Top" LastChildFill="False">
+                                            <DockPanel DockPanel.Dock="Top" LastChildFill="False">
+                                                <TextBlock Text="{TemplateBinding Title}" DockPanel.Dock="Left" Margin="10,3,0,0" VerticalAlignment="Center"
+                                                           Opacity="0.75" Style="{DynamicResource BaseTextBlockStyle}" x:Name="PART_TextTitle" />
+                                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Margin="0,3,5,0">
+                                                    <Button Style="{DynamicResource WindowBarButton}" Content="r" x:Name="PART_ButtonClose" Click="CloseButton_Click"/>
+                                                </StackPanel>
+                                            </DockPanel>
+                                        </DockPanel>
+                                    </Grid>
+                                </Border>
+                            </AdornerDecorator>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- Muted label (theme font, small, dimmed) for the field names. -->
+            <Style x:Key="LogLabel" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="{DynamicResource FontFamily}" />
+                <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextBrushDarker}" />
+            </Style>
+
+            <!-- Normal value text (theme font, primary color). -->
+            <Style x:Key="LogValue" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="{DynamicResource FontFamily}" />
+                <Setter Property="FontSize" Value="{DynamicResource FontSize}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>   <!-- source name -->
+            <RowDefinition Height="Auto"/>   <!-- detail: last scan / result (+ inline error) / entries -->
+            <RowDefinition Height="Auto"/>   <!-- never-scanned hint -->
+            <RowDefinition Height="Auto"/>   <!-- debug log label -->
+            <RowDefinition Height="*"/>      <!-- debug log box (fills; the log grows on window resize) -->
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="SourceNameText" Grid.Row="0" Margin="0,0,0,10"
+                   FontWeight="Bold" TextWrapping="Wrap"
+                   FontFamily="{DynamicResource FontFamily}" FontSize="{DynamicResource FontSize}"
+                   Foreground="{DynamicResource TextBrush}" />
+
+        <!-- Detail rows (collapsed when the source has never been scanned). -->
+        <Grid x:Name="DetailGrid" Grid.Row="1" Margin="0,0,0,4">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+                <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="Last scan" Style="{StaticResource LogLabel}" Margin="0,0,10,2"/>
+            <TextBlock x:Name="LastScanText" Grid.Row="0" Grid.Column="1" Style="{StaticResource LogValue}" Margin="0,0,0,2"/>
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Result" Style="{StaticResource LogLabel}" Margin="0,0,10,2"/>
+            <TextBlock x:Name="ResultText" Grid.Row="1" Grid.Column="1" Style="{StaticResource LogValue}" Margin="0,0,0,2"/>
+
+            <!-- The failure reason, inline directly under Result (no separate error pane):
+                 the one line a user needs to act on (HTTP status + text, timeout, socket
+                 cause). A read-only TextBox so it can be selected and copied like the log
+                 (a WPF TextBlock on .NET Framework is not selectable). Collapsed unless the
+                 last scan failed with a message. -->
+            <TextBox x:Name="ErrorText" Grid.Row="2" Grid.ColumnSpan="2" Margin="0,1,0,2"
+                     IsReadOnly="True" BorderThickness="0" Background="Transparent" Padding="0"
+                     FontFamily="{DynamicResource FontFamily}" FontSize="{DynamicResource FontSizeSmall}"
+                     TextWrapping="Wrap" IsReadOnlyCaretVisible="False"
+                     VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Hidden"
+                     Visibility="Collapsed"/>
+
+            <TextBlock Grid.Row="3" Grid.Column="0" Text="Entries" Style="{StaticResource LogLabel}" Margin="0,0,0,2"/>
+            <TextBlock x:Name="EntriesText" Grid.Row="3" Grid.Column="1" Style="{StaticResource LogValue}" Margin="0,0,0,2"/>
+
+            <TextBlock Grid.Row="4" Grid.Column="0" Text="Tags found" Style="{StaticResource LogLabel}" Margin="0,0,10,2"/>
+            <TextBlock x:Name="TagCountText" Grid.Row="4" Grid.Column="1" Style="{StaticResource LogValue}" Margin="0,0,0,2"/>
+
+            <TextBlock Grid.Row="5" Grid.Column="0" Text="Links found" Style="{StaticResource LogLabel}" Margin="0,0,0,2"/>
+            <TextBlock x:Name="LinkCountText" Grid.Row="5" Grid.Column="1" Style="{StaticResource LogValue}" Margin="0,0,0,2"/>
+        </Grid>
+
+        <!-- Shown only when the source has no record yet (never scanned since this Playnite run). -->
+        <TextBlock x:Name="NeverScannedText" Grid.Row="2" Margin="0,0,0,4"
+                   Visibility="Collapsed" TextWrapping="Wrap" Style="{StaticResource LogLabel}" />
+
+        <!-- Debug log section (collapsed unless the source has run-log lines).
+             The multiline log the parsers append while fetching/parsing: what was fetched,
+             how many entries each stage produced, and - per game - any line that failed to
+             parse (regex miss, empty field, bad element), so a source that returns 0 entries
+             can be diagnosed from the run itself instead of a guess. -->
+        <TextBlock x:Name="DebugLogLabel" Grid.Row="3" Text="Debug log" Style="{StaticResource LogLabel}" Margin="0,0,0,4"
+                   Visibility="Collapsed"/>
+        <!-- Read-only TextBox (not a TextBlock): the log must be selectable and copyable,
+             and a WPF TextBlock on .NET Framework cannot be selected. It scrolls its own
+             content, so no outer ScrollViewer. -->
+        <Border x:Name="DebugLogBox" Grid.Row="4" BorderBrush="{DynamicResource PopupBorderBrush}"
+                BorderThickness="1" Padding="8" Margin="0,0,0,4" Visibility="Collapsed">
+            <TextBox x:Name="DebugLogText"
+                     IsReadOnly="True" BorderThickness="0" Background="Transparent"
+                     Foreground="{DynamicResource TextBrush}"
+                     FontFamily="Consolas" FontSize="{DynamicResource FontSizeSmall}"
+                     TextWrapping="Wrap" AcceptsReturn="True" IsReadOnlyCaretVisible="False"
+                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"/>
+        </Border>
+    </Grid>
+</Window>

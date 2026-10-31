@@ -1,0 +1,394 @@
+<UserControl x:Class="Playnite.VRMods.VrModSettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Playnite.VRMods">
+    <!--
+        VRMod settings view.
+
+        Every visual property here is resolved from Playnite's active theme via
+        DynamicResource (theme keys are merged into Application.Resources by Playnite at
+        startup). No hardcoded colors: the view follows the user's chosen theme
+        automatically.
+
+        Controls (CheckBox, Slider, TextBox, Button, GroupBox) inherit Playnite's themed
+        implicit styles from the host application, so no control templates are redefined here.
+    -->
+    <UserControl.Resources>
+        <ResourceDictionary>
+            <!--
+                Playnite-themed building blocks. Every color/font/size resolves from the host
+                theme via DynamicResource (the keys are merged into Application.Resources by
+                Playnite at startup), so this view automatically follows the user's chosen
+                theme. No hardcoded colors appear here — only theme keys + geometric literals.
+            -->
+            <local:BoolToVisConverter x:Key="BoolToVis" />
+            <local:ErrorToBrushConverter x:Key="ErrorToBrush" />
+
+            <!-- Body text: theme font + primary text color. -->
+            <Style x:Key="VrText" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="{DynamicResource FontFamily}" />
+                <Setter Property="FontSize" Value="{DynamicResource FontSize}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextBrush}" />
+                <Setter Property="TextWrapping" Value="NoWrap" />
+            </Style>
+
+            <!-- Secondary/muted text: theme font (small) + dimmed text color. -->
+            <Style x:Key="VrTextMuted" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="{DynamicResource FontFamily}" />
+                <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextBrushDarker}" />
+                <Setter Property="TextWrapping" Value="NoWrap" />
+            </Style>
+
+            <!-- Accent text (Playnite's cyan): counts, links, highlights. -->
+            <Style x:Key="VrAccent" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="{DynamicResource FontFamily}" />
+                <Setter Property="FontSize" Value="{DynamicResource FontSize}" />
+                <Setter Property="Foreground" Value="{DynamicResource GlyphBrush}" />
+                <Setter Property="TextWrapping" Value="NoWrap" />
+            </Style>
+
+            <!--
+                Card container (themed): subtle status/row background. Mirrors Playnite's own
+                card chrome (GridItemBackgroundBrush fill + PanelSeparatorBrush hairline border).
+            -->
+            <Style x:Key="VrCard" TargetType="Border">
+                <Setter Property="Background" Value="{DynamicResource GridItemBackgroundBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource PanelSeparatorBrush}" />
+                <Setter Property="BorderThickness" Value="{DynamicResource ControlBorderThickness}" />
+                <Setter Property="CornerRadius" Value="{DynamicResource ControlCornerRadius}" />
+                <Setter Property="Padding" Value="10,8" />
+                <Setter Property="Margin" Value="0,0,0,10" />
+            </Style>
+
+            <!--
+                Status dot (themed): small rounded indicator. Background is overridden
+                per-instance (ErrorToBrushConverter) to the source's health color; the default
+                here is a neutral gray for the "never scanned" state.
+            -->
+            <Style x:Key="VrStatusDot" TargetType="Border">
+                <Setter Property="Width" Value="10" />
+                <Setter Property="Height" Value="10" />
+                <Setter Property="CornerRadius" Value="5" />
+                <Setter Property="Background" Value="{DynamicResource PanelSeparatorBrush}" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+
+            <!-- Empty-state hint text (muted, italic, centered). -->
+            <Style x:Key="VrEmpty" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="{DynamicResource FontFamily}" />
+                <Setter Property="FontSize" Value="{DynamicResource FontSizeSmall}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextBrushDarker}" />
+                <Setter Property="FontStyle" Value="Italic" />
+                <Setter Property="HorizontalAlignment" Value="Center" />
+                <Setter Property="Margin" Value="0,8" />
+            </Style>
+
+            <!--
+                Right-aligned number cell (Sources grid, Lists/Matched columns). Theme font +
+                muted color: counts are secondary data, the names/links carry the row.
+            -->
+            <Style x:Key="VrGridNumber" TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="{DynamicResource FontFamily}" />
+                <Setter Property="FontSize" Value="{DynamicResource FontSize}" />
+                <Setter Property="Foreground" Value="{DynamicResource TextBrushDarker}" />
+                <Setter Property="HorizontalAlignment" Value="Right" />
+            </Style>
+        </ResourceDictionary>
+    </UserControl.Resources>
+
+    <!--
+        Page column: centered with a max width, so the page still reads well when the
+        Add-ons window is maximized (left-pinned at a fixed width left a dead zone on
+        the right at large window sizes). Narrow windows: the column fills the width;
+        wide windows: it stays a comfortable reading column in the middle.
+    -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="16">
+        <StackPanel MaxWidth="980" HorizontalAlignment="Center">
+
+            <!--
+                Header row: the page subtitle on the left, Help on the right.
+                (The old "VRMod Tags" title is gone: the add-ons tree already labels this
+                page, so a second title was redundant. Help moved up here so it is reachable
+                without scrolling, and the old bottom Help block is removed.)
+            -->
+            <DockPanel Margin="0,0,0,16">
+                <Button DockPanel.Dock="Right" Content="Help" Command="{Binding HelpCommand}"
+                        Padding="12,4" VerticalAlignment="Center"
+                        ToolTip="Opens the README that ships with this installed version." />
+                <TextBlock Text="Tag the games that have VR mods, ports, or conversions from community sources."
+                           Style="{StaticResource VrTextMuted}" TextWrapping="Wrap"
+                           VerticalAlignment="Center" />
+            </DockPanel>
+
+            <!--
+                Top: the "Games with VR mods" statistic plus the two primary actions
+                (Full Scan / Review VR Mods). They sit above the source configuration so the
+                user can act without scrolling to the bottom.
+            -->
+            <DockPanel Margin="0,0,0,8" LastChildFill="True">
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="Full Scan" Command="{Binding FullScanCommand}"
+                            Padding="12,4" VerticalAlignment="Center" Margin="0,0,8,0"
+                            ToolTip="Check every enabled source and apply the matches right away, without a dialog." />
+                    <Button Content="Review VR Mods" Command="{Binding ReviewCommand}"
+                            Background="{DynamicResource NormalBrush}"
+                            Padding="12,4" VerticalAlignment="Center"
+                            ToolTip="Open the review dialog for every matched game without rescanning (it uses the data from the last scan). Runs a scan first only when no source data is cached yet." />
+                </StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="Games with VR mods:" Style="{StaticResource VrText}" VerticalAlignment="Center" />
+                    <TextBlock Text="{Binding AcceptedCount, Mode=OneWay}" Style="{StaticResource VrAccent}"
+                               Margin="6,0,0,0" VerticalAlignment="Center" />
+                </StackPanel>
+            </DockPanel>
+            <TextBlock Text="Full Scan checks every enabled source and applies the matches, without a dialog. Review VR Mods opens the review dialog for every matched game from the data of your last scan — without rescanning — so you can review or change your decisions (it runs a scan first only when no scan data is available yet, e.g. right after Playnite started)."
+                       Style="{StaticResource VrTextMuted}" TextWrapping="Wrap" Margin="0,0,0,14" />
+
+            <!--
+                Sources: one row per registered source, in a grid (themed via Playnite's
+                implicit DataGrid style — the same idiom as the review dialog, which the
+                freeform card rows replaced now that a row carries six pieces of info).
+                Columns: enable checkbox | Source (website link) | Links (per-source link
+                toggle) | Last scan (status dot + short text) | Lists | Matched.
+                Details that don't fit a cell (full status incl. error messages, the website
+                URL, what the numbers mean) live in tooltips; the column headers carry the
+                labels the old inline text embedded ("Last scan: ...", "lists N · matched M").
+            -->
+            <GroupBox Header="Sources" FontSize="{DynamicResource FontSize}" Margin="0,0,0,14" Padding="8">
+                <StackPanel>
+                    <DataGrid x:Name="SourcesDataGrid"
+                              ItemsSource="{Binding SourceRows}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              CanUserResizeRows="False"
+                              CanUserSortColumns="False"
+                              SelectionMode="Single"
+                              RowHeaderWidth="0"
+                              Margin="0,0,0,8">
+                        <DataGrid.Columns>
+                            <!-- Enable: "Active" header so the bare checkbox column has a label.
+                                 The setter drives the saved setting and, on true->false, prompts
+                                 about cleaning up the source's tags. -->
+                            <DataGridTemplateColumn Width="52">
+                                <DataGridTemplateColumn.Header>
+                                    <TextBlock Text="Active" Style="{StaticResource VrText}"
+                                               ToolTip="Whether matching is enabled for this source." />
+                                </DataGridTemplateColumn.Header>
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  ToolTip="Enable or disable matching for this source." />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- Source: the clickable website link (as before). The cell tooltip
+                                 shows the destination URL, so the link target is visible before
+                                 clicking. -->
+                            <DataGridTemplateColumn Width="*">
+                                <DataGridTemplateColumn.Header>
+                                    <TextBlock Text="Source" Style="{StaticResource VrText}"
+                                               ToolTip="The community source that lists VR mods, ports, or conversions." />
+                                </DataGridTemplateColumn.Header>
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock VerticalAlignment="Center" ToolTip="{Binding WebsiteUrl}">
+                                            <Hyperlink Click="OnSourceWebsiteClick">
+                                                <!-- Mode=OneWay: Run.Text binds TwoWay by default, but DisplayName is display-only -->
+                                                <Run Text="{Binding DisplayName, Mode=OneWay}" />
+                                            </Hyperlink>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- Links toggle: whether saved matches from this source add a link
+                                 to the game's Links (per-game page, or the source's website).
+                                 The header now carries the label the checkbox used to show. -->
+                            <DataGridTemplateColumn Width="60">
+                                <DataGridTemplateColumn.Header>
+                                    <TextBlock Text="Links" Style="{StaticResource VrText}"
+                                               ToolTip="Whether saved matches from this source add a link to your games' Links (the source's per-game page, or its website)." />
+                                </DataGridTemplateColumn.Header>
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding LinksEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                  ToolTip="Adds a link to this source (its per-game page, or its website) to your games' Links for saved matches." />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <!-- Last scan: status dot + short text (the "Last scan:" label moved
+                                 to the header). Full status — including error messages that
+                                 would not fit the cell — is the cell tooltip. Dot + text keep
+                                 the ErrorToBrushConverter coloring bound to the full text. -->
+                            <DataGridTemplateColumn Width="170">
+                                <DataGridTemplateColumn.Header>
+                                    <TextBlock Text="Last scan" Style="{StaticResource VrText}"
+                                               ToolTip="When this source was last scanned (local time)." />
+                                </DataGridTemplateColumn.Header>
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Border Style="{StaticResource VrStatusDot}"
+                                                    Background="{Binding StatusText, Converter={StaticResource ErrorToBrush}}"
+                                                    Margin="0,0,8,0" />
+                                            <TextBlock Text="{Binding StatusShort}"
+                                                   FontFamily="{DynamicResource FontFamily}"
+                                                   FontSize="{DynamicResource FontSizeSmall}"
+                                                   Foreground="{Binding StatusText, Converter={StaticResource ErrorToBrush}}"
+                                                   VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                                <DataGridTemplateColumn.CellStyle>
+                                    <Style TargetType="DataGridCell">
+                                        <Setter Property="ToolTip" Value="{Binding StatusText}" />
+                                    </Style>
+                                </DataGridTemplateColumn.CellStyle>
+                            </DataGridTemplateColumn>
+                            <!-- Lists: how many games the source lists (last scan entry count). -->
+                            <DataGridTextColumn Width="55" IsReadOnly="True" Binding="{Binding ListedCount}"
+                                                ElementStyle="{StaticResource VrGridNumber}">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock Text="Lists" Style="{StaticResource VrText}"
+                                               ToolTip="How many games this source lists (last scan)." />
+                                </DataGridTextColumn.Header>
+                            </DataGridTextColumn>
+                            <!-- Matched: how many of the user's games have an ACCEPTED match from
+                                 this source (pending and rejected don't count — the tooltip says
+                                 so, because "matched 0" right after a scan looks broken). -->
+                            <DataGridTextColumn Width="65" IsReadOnly="True" Binding="{Binding MatchedCount}"
+                                                ElementStyle="{StaticResource VrGridNumber}">
+                                <DataGridTextColumn.Header>
+                                    <TextBlock Text="Matched" Style="{StaticResource VrText}"
+                                               ToolTip="How many of your games have an accepted match from this source. Pending and rejected matches don't count." />
+                                </DataGridTextColumn.Header>
+                            </DataGridTextColumn>
+                            <!-- Last run: opens this source's last-run log (scan time, result,
+                                 entry count, tags/links applied, error). -->
+                            <DataGridTemplateColumn Width="84">
+                                <DataGridTemplateColumn.Header>
+                                    <TextBlock Text="Log" Style="{StaticResource VrText}"
+                                               ToolTip="Open this source's last run." />
+                                </DataGridTemplateColumn.Header>
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <Grid>
+                                            <Button Content="Last run" Padding="8,2" HorizontalAlignment="Left"
+                                                    ToolTip="Show this source's last run: scan time, result, entry count, tags/links applied, and any error."
+                                                    Click="OnShowLastRunClick" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Text="Sources enabled for matching. Click a source name to open its website; hover any value to see what it means. 'Matched' counts only accepted matches — pending and rejected don't count."
+                               Style="{StaticResource VrTextMuted}" TextWrapping="Wrap" />
+                </StackPanel>
+            </GroupBox>
+
+            <!--
+                Scan settings. Every setting is a uniform row: the label + control on the first
+                line, a short muted description on the second line. (Previously the rows had
+                different shapes, which made the section hard to scan.)
+            -->
+            <!--
+                Scan settings. Three uniform rows: a shared label column (so the controls line
+                up), the control on line 1, and a short muted description on line 2. The fuzzy
+                slider fills the row (no dead gap) with the percentage pinned to the right so
+                the value is always visible next to where you stopped dragging.
+            -->
+            <GroupBox Header="Scan settings" FontSize="{DynamicResource FontSize}" Margin="0,0,0,14" Padding="8">
+                <StackPanel>
+                    <!-- Fuzzy match threshold -->
+                    <Grid Margin="0,0,0,14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="190" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Fuzzy match threshold"
+                                   Style="{StaticResource VrText}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <Slider Grid.Row="0" Grid.Column="1" Minimum="0.5" Maximum="1.0" SmallChange="0.05"
+                                IsSnapToTickEnabled="True" TickFrequency="0.05"
+                                Value="{Binding Settings.FuzzyMatchThreshold, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                VerticalAlignment="Center" Margin="0,0,10,0" />
+                        <TextBlock Grid.Row="0" Grid.Column="2" MinWidth="42" TextAlignment="Right"
+                                   Text="{Binding Settings.FuzzyMatchThreshold, StringFormat=F0%, Mode=OneWay}"
+                                   Style="{StaticResource VrAccent}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="3" Margin="0,5,0,0" TextWrapping="Wrap"
+                                   Style="{StaticResource VrTextMuted}"
+                                   Text="How confident a name match must be to count as a match. Lower = more matches to review; 100% = exact names only. It bottoms out at 50% because below that nearly every game in the library counts as a match." />
+                    </Grid>
+
+                    <!-- Scan interval -->
+                    <Grid Margin="0,0,0,14">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="190" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Scan interval"
+                                   Style="{StaticResource VrText}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <!--
+                            Tag holds the interval in minutes as a string (XAML cannot
+                            assign an int to the object-typed Tag property); WPF's
+                            binding engine coerces it to the settings' int property.
+                        -->
+                        <ComboBox Grid.Row="0" Grid.Column="1" Width="160" HorizontalAlignment="Left"
+                                  VerticalAlignment="Center"
+                                  SelectedValue="{Binding Settings.ScanIntervalMinutes, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  SelectedValuePath="Tag">
+                            <ComboBoxItem Content="15 minutes" Tag="15" />
+                            <ComboBoxItem Content="30 minutes" Tag="30" />
+                            <ComboBoxItem Content="1 hour" Tag="60" />
+                            <ComboBoxItem Content="6 hours" Tag="360" />
+                            <ComboBoxItem Content="12 hours" Tag="720" />
+                            <ComboBoxItem Content="1 day" Tag="1440" />
+                            <ComboBoxItem Content="3 days" Tag="4320" />
+                            <ComboBoxItem Content="7 days" Tag="10080" />
+                            <ComboBoxItem Content="14 days" Tag="20160" />
+                            <ComboBoxItem Content="30 days" Tag="43200" />
+                            <ComboBoxItem Content="Never" Tag="0" />
+                        </ComboBox>
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Margin="0,5,0,0" TextWrapping="Wrap"
+                                   Style="{StaticResource VrTextMuted}"
+                                   Text="How often Playnite automatically re-checks every enabled source for new VR mod listings. Only runs while Playnite is open — closing it stops the schedule; a scan runs on next startup." />
+                    </Grid>
+
+                    <!-- Cache duration -->
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="190" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Row="0" Grid.Column="0" Text="Cache duration (minutes)"
+                                   Style="{StaticResource VrText}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                        <TextBox Grid.Row="0" Grid.Column="1" Width="70" HorizontalAlignment="Left" TextAlignment="Center"
+                                 VerticalAlignment="Center"
+                                 Text="{Binding Settings.CacheDurationMinutes, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Margin="0,5,0,0" TextWrapping="Wrap"
+                                   Style="{StaticResource VrTextMuted}"
+                                   Text="How long a downloaded source listing is kept before the next scan re-downloads it (60 = 1 hour). Used by every scan (startup + scheduled + single-game on install), which only run while Playnite is open." />
+                    </Grid>
+                </StackPanel>
+            </GroupBox>
+
+            <!-- Bottom padding -->
+            <TextBlock Text=" " />
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

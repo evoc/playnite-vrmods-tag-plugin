@@ -1,0 +1,55 @@
+# EditorConfig: the formatting the codebase already follows, written down so
+# `dotnet format` and any editor agree on it instead of guessing per tool.
+# Kept to properties the repository already satisfies - adding rules the code
+# does not follow would turn a formatting gate into a reformat-the-repo commit.
+root = true
+
+[*]
+charset = utf-8
+# end_of_line deliberately NOT set: this repo is genuinely mixed (78 .cs files
+# are LF in git, a handful of test files are stored CRLF). Declaring one value
+# makes `dotnet format` rewrite ~2 200 lines of unrelated test files on the
+# first gate run - a security review commit must not bury itself in its own
+# whitespace noise. Pick an EOL policy in its own commit if you want one.
+indent_style = space
+trim_trailing_whitespace = true
+
+[*.{cs,csproj}]
+indent_size = 4
+
+# Analyzer exclusions. The project sets <AnalysisMode>All</AnalysisMode> (the
+# SDK leaves analyzers off on net462 otherwise), so every CA family runs and a
+# family is silenced only by an entry here - each with its reason, as AGENTS.md
+# requires. A severity line without a reason is a suppressed warning, not an
+# exclusion.
+#
+# These severities win over the command line: -p:AnalysisLevel=latest-All does
+# NOT re-enable a family listed here. To see the whole backlog - every family,
+# exclusions included - comment the dotnet_diagnostic.* lines out, run
+#   dotnet build source/Playnite.VRMods.csproj -c Release -p:AnalysisLevel=latest-All --no-incremental
+# and restore them before committing. That output is a work list for the code,
+# not a record to store here: what is fixed lives in the code, what is excluded
+# lives here with its reason.
+#
+# CA1031 (catch-generic) is deliberately NOT excluded. A broad catch is allowed
+# only where being broad is the contract - Playnite's UI handlers, its extension
+# seam, settings persistence, best-effort uninstall cleanup - and every such site
+# carries a [SuppressMessage] with its reason at the site. Everywhere else catch
+# a named failure vocabulary (request plumbing, JSON payload shape,
+# path-and-file), each pinned by a test that says what it absorbs and what it
+# must rethrow. A new broad catch is a build warning, and the release gate sees
+# build warnings.
+dotnet_diagnostic.CA1002.severity = suggestion # Generic List<T>/IList<T> in public signatures: one assembly whose external consumers are Playnite's own interfaces and one settings class; the reported sites are plugin-internal view models and parsers, and re-typing them to IReadOnlyList buys nothing a caller could exploit.
+dotnet_diagnostic.CA1054.severity = suggestion # String parameters that hold URLs: they are this plugin's own source definitions and user-typed settings values, validated by WebUrl.IsHttpUrl before any request. A Uri parameter would throw at the call site instead of letting the settings UI report a bad URL to the user.
+dotnet_diagnostic.CA1055.severity = suggestion # String returns that look like URLs: same reasoning as CA1054 on the return side (source definitions, deep-link strings handed to Playnite's Links).
+dotnet_diagnostic.CA1056.severity = suggestion # String properties that hold URLs: the settings object is serialized by Playnite.SDK.Data, which round-trips strings; a Uri property moves the parse failure into the deserializer.
+dotnet_diagnostic.CA1062.severity = suggestion # Null validation on externally visible methods: "externally visible" here is Playnite's loader passing its own live objects. The guards that carry untrusted data (parse results, scraped strings, settings blobs) are written by hand and tested; the reported sites are internal helpers the analyzer treats as public API.
+dotnet_diagnostic.CA1308.severity = suggestion # ToLowerInvariant for case folding: the lowered values are persisted keys (settings JSON keys, tag names, decision keys) that past versions wrote in lowercase. Switching to ToUpperInvariant to satisfy the rule would rewrite existing users' settings files for a style preference.
+dotnet_diagnostic.CA2007.severity = suggestion # ConfigureAwait(false): every await here resumes on Playnite's UI thread on purpose - scan progress, dialogs, tag and link writes are UI-affine, and the plugin runs inside Playnite's dispatcher. Losing that affinity is a failure mode, not a style preference.
+dotnet_diagnostic.CA2227.severity = suggestion # Settable collection properties: the settings class is a Playnite ISettings data type that Playnite.SDK.Data both deserializes and saves; read-only collections would fight the serializer.
+
+[*.{yml,yaml}]
+indent_size = 2
+
+[Makefile]
+indent_style = tab

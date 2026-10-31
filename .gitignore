@@ -1,0 +1,30 @@
+# Build outputs
+**/bin/
+**/obj/
+*.dll
+*.exe
+*.pdb
+*.cache
+dist/
+
+# Visual Studio
+*.csproj.user
+*.suo
+.vs/
+*.user
+
+# Build/test artifacts (local working copies, not part of the repo)
+logs/
+scratch/
+**/*.db
+publish-test/
+source/publish-test/
+Playnite Portable*/
+*.7z
+*.orig
+*.dmp
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

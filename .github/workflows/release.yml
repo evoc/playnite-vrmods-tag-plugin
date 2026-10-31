@@ -1,0 +1,143 @@
+# Release: every push to main is a release.
+#
+# Versioning (Conventional Commits, configured in GitVersion.yml):
+#   - the tag is the version: vX.Y.Z
+#   - the bump comes from the commit messages since the last tag:
+#       fix:/perf: (any scope)     -> patch  (1.0.5 -> 1.0.6)
+#       feat: (any scope)         -> minor  (1.0.6 -> 1.1.0)
+#       <type>!:  or a BREAKING CHANGE: footer -> major (1.x -> 2.0.0)
+#   - no prereleases: every push to main is a real, stable release
+#   - feature branches are built locally, never released
+#
+# The windows-latest runner is required: the plugin targets .NET Framework
+# 4.6.2 / WPF, which only builds on Windows.
+#
+# Third-party Actions are pinned to full commit SHAs, not moving tags. A tag
+# name (`@v4`) is a ref somebody else can move: whoever controls that repo can
+# point it at different code, and this job runs on every push to main with
+# `contents: write` and packages what it produces into the .pext users install.
+# A SHA names the exact code that ran. Dependabot (.github/dependabot.yml) is
+# what keeps these pins current; the comments after each pin say which release
+# the SHA is, so a bump is reviewable as a diff instead of a magic number.
+name: Release
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (default: next version from the commits)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    # Two pushes to main in a row must not both resolve the same version and
+    # race on creating/pushing the tag and the release.
+    concurrency:
+      group: release-main
+      cancel-in-progress: false
+    steps:
+      - name: "Checkout (full history: tags + commit messages)"
+        # actions/checkout v4.4.0
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      # actions/setup-dotnet v4.3.1
+      - name: Setup .NET SDK (pinned in global.json)
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+
+      - name: Install GitVersion.Tool
+        # Exact version, matching GitVersion.MsBuild in the csproj: a floating
+        # `6.*` means the version a release got can change after the fact
+        # (yesterday's build and today's rebuild of the same commit would not
+        # even agree on what the version is).
+        run: dotnet tool install --global GitVersion.Tool --version 6.8.2
+
+      - name: "Vulnerable packages (supply-chain gate)"
+        # Fails the release if this project - or anything it pulls in - depends
+        # on a package with a known advisory. The plugin parses hostile web
+        # input inside System.Text.Json's code path, so an unpatched transitive
+        # dependency is part of the attack surface, not a hygiene note.
+        run: |
+          cd source
+          dotnet list package --vulnerable --include-transitive
+
+      - name: Resolve version + tag
+        id: ver
+        run: |
+          $lastTag = git describe --tags --match "v*" --abbrev=0 2>$null
+          if ($env:INPUT_VERSION) {
+              # Manual run with an explicit version (e.g. a re-cut).
+              $version = $env:INPUT_VERSION
+          } elseif (-not $lastTag) {
+              # First release: no tag exists yet.
+              $version = "1.0.0"
+          } else {
+              # Next stable version from the Conventional Commits since the
+              # last tag. MajorMinorPatch is the stable version; the suffix
+              # only appears in FullSemVer, which we never use.
+              $gv = dotnet-gitversion -l json | ConvertFrom-Json
+              $version = $gv.MajorMinorPatch
+          }
+          $parsed = $null
+          if (-not [Version]::TryParse($version, [ref]$parsed)) {
+              throw "version '$version' is not a parseable .NET Version"
+          }
+          # Idempotent: create the tag only if it does not exist yet.
+          $existing = git tag --list "v$version"
+          if (-not $existing) {
+              git tag "v$version"
+              git push origin "v$version"
+          }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: "Code analysis (release gate)"
+        # AGENTS.md requires a 0-warning build, and the plugin project turns the
+        # .NET analyzers on (net462 leaves them off by default). Neither
+        # `dotnet build` nor `dotnet test` fails on a warning, so the gate names
+        # them: any analyzer warning (": warning CA") stops the release.
+        # The build already runs every family; .editorconfig carries the
+        # families that were judged and excluded, each with its reason, so this
+        # step covers every family not excluded there (AGENTS.md, "Analyzers").
+        # Restore warnings (NU...) are out of scope - they come from third-party
+        # packages, not from this code.
+        shell: pwsh
+        run: |
+          dotnet build source/Playnite.VRMods.csproj -c Release -v n |
+            Tee-Object -FilePath ca-analysis.log
+          $buildExit = $LASTEXITCODE
+          $pattern = ': warning CA'
+          $found = @(Select-String -Path ca-analysis.log -Pattern $pattern)
+          if ($found.Count -gt 0) {
+            $found | ForEach-Object { Write-Host $_.Line }
+            Write-Host "Analyzer warnings found: $($found.Count)"
+            Write-Host "::error::build must stay warning-free (AGENTS.md)"
+            exit 1
+          }
+          exit $buildExit
+
+      - name: Test (release gate)
+        run: dotnet test tests/Playnite.VRMods.Tests.csproj -c Release
+
+      - name: Build release package (.pext)
+        env:
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
+        run: ./tools/Build-Release.ps1 -Version $env:RELEASE_VERSION
+
+      # softprops/action-gh-release v3.0.3 (folded scalar: the full SHA pin
+      # is longer than this file's 80-column limit)
+      - name: Create GitHub release
+        uses: >-
+          softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
+        with:
+          tag_name: "v${{ steps.ver.outputs.version }}"
+          files: "dist/VRMod Tags-${{ steps.ver.outputs.version }}.pext"
+          generate_release_notes: true
+          overwrite: true

@@ -1,0 +1,58 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net462</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <!-- Roslyn analyzers are off by default on a net462 target (the SDK turns
+         them on for net5+ only), so none of the framework's own rules ever ran
+         on a codebase that parses twelve attacker-chosen websites and writes
+         into the Playnite library. The posture is "every family on, unless a
+         family has been judged and excluded with a written reason":
+         AnalysisMode=All enables all of them, and .editorconfig carries the
+         exclusions, each with why. That inversion matters - a rule nobody sees
+         is the same as no rule. Every exclusion and its reason lives in
+         .editorconfig, where the build enforces it. Adding a new exclusion needs
+         a reason at the exclusion site. -->
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <AnalysisMode>All</AnalysisMode>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+ <ItemGroup>
+    <Reference Include="System.Net.Http" />
+  </ItemGroup>
+
+ <ItemGroup>
+    <None Include="icon.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="extension.yaml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Shipped next to the DLL so the installed extension's Help button opens the
+         README that matches the installed version (Playnite extracts every file
+         in the .pext into the extension directory). -->
+    <None Include="..\README.md" Link="README.md">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- The user manual (docs/README.md landing page + sub-pages + img/ figures),
+         resolved by VrModHelp relative to the loaded assembly. -->
+    <None Include="..\docs\**" LinkBase="docs">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Version comes from the git tag (see GitVersion.yml); the tag is created
+         automatically by the release workflow on every push to main. -->
+    <PackageReference Include="GitVersion.MsBuild" Version="6.8.2" PrivateAssets="all" />
+<PackageReference Include="PlayniteSDK" Version="6.15.0" />
+     <PackageReference Include="System.Text.Json" Version="8.0.5" />
+     <PackageReference Include="System.ValueTuple" Version="4.5.0" />
+   </ItemGroup>
+
+  </Project>

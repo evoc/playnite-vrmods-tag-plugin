@@ -1,0 +1,62 @@
+# Lint PR commit messages against Conventional Commits.
+#
+# The release version is derived from these messages (feat: -> minor,
+# fix: -> patch, <type>!: / BREAKING CHANGE: -> major), so a non-conventional
+# message silently under-bumps the release. This gate catches that on PRs.
+name: Commitlint
+
+on:
+  pull_request:
+
+# Least privilege: this job reads commits and nothing else. A workflow token
+# defaults to write, which a lint job has no use for.
+permissions:
+  contents: read
+
+jobs:
+  commitlint:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        # actions/checkout v4.4.0, pinned to the commit that tag points at
+        # (see .github/workflows/release.yml for why tags are not good enough).
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      # Conventional Commits gate, owned by this repo instead of pulled in as
+      # a third-party action. The previous version was wagoid/commitlint-github-
+      # action (v2.2.5), which - even SHA-pinned - handed a third party's code
+      # the GITHUB_TOKEN, and whose pin could not be wrapped inside this file's
+      # 80-column limit. The rule is one regex and it decides the release bump,
+      # so owning it is cheaper than depending on it: no supply-chain step, no
+      # token hand-off, and the type list is copied verbatim from GitVersion.yml
+      # so the gate cannot drift from the rules that compute the version.
+      - name: "Lint commit messages (Conventional Commits)"
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $types = 'build|chore|ci|docs|feat|fix|perf|refactor|' +
+            'revert|style|test'
+          $pattern = "^($types)(\([\w\s-,/\\]+\))?!?: .+"
+          $range = "$env:BASE_SHA..$env:HEAD_SHA"
+          $headers = @(git log --no-merges --format='%s' $range)
+          $bad = @($headers | Where-Object { $_ -notmatch $pattern })
+          if ($bad.Count -eq 0) {
+            Write-Host "OK: $($headers.Count) commit header(s) conventional."
+            exit 0
+          }
+          foreach ($h in $bad) { Write-Host "::error::Not conventional: $h" }
+          Write-Host "Expected <type>(scope)!: message, type in: $types"
+          exit 1
+
+      # New gate, not an existing convention: AGENTS.md requires a 0-warning
+      # build but says nothing about formatting, so style drift was invisible.
+      # `dotnet format --verify-changes` (the flag the review quoted) does not
+      # exist in SDK 8; these two subcommands do, and both are clean today.
+      - name: "Format gate (whitespace + style)"
+        run: |
+          dotnet format whitespace --verify-no-changes
+          dotnet format style --verify-no-changes
