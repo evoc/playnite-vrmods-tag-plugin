@@ -18,9 +18,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        # actions/checkout v4.4.0, pinned to the commit that tag points at
+        # actions/checkout v7.0.1, pinned to the commit that tag points at
         # (see .github/workflows/release.yml for why tags are not good enough).
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
 
