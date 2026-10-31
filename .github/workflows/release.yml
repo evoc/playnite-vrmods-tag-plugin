@@ -184,4 +184,12 @@ jobs:
           tag_name: "v${{ steps.ver.outputs.version }}"
           files: "dist/VRMod Tags-${{ steps.ver.outputs.version }}.pext"
           generate_release_notes: true
-          overwrite: true
+          # v3.0.3 declares no `overwrite` input. The key this step carried
+          # was unknown to the action, so the runner warned
+          # ("Unexpected input(s) 'overwrite'") and ignored it. The real one
+          # is `overwrite_files`: it replaces an existing asset of the same
+          # name instead of stacking a second copy when a version is re-cut.
+          # It defaults to true at this pin - stated here so a future change
+          # to that upstream default cannot silently start stacking duplicate
+          # .pext files on a re-release.
+          overwrite_files: true
