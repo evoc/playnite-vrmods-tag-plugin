@@ -498,15 +498,20 @@ is **not in this repo**.
 ## CI gates and supply chain
 
 Two workflows, both SHA-pinned (a tag is a moving ref anyone can re-point; a SHA
-pin is what makes "the action we ran" mean something), both capped at
-`permissions: contents: read`:
+pin is what makes "the action we ran" mean something). `commitlint.yml` runs at
+`permissions: contents: read`; `release.yml` runs at `contents: write` because it
+pushes the version tag it creates:
 
-- `.github/workflows/release.yml` (push to main): test gate -> vulnerable-
-  package gate (`dotnet list package --vulnerable --include-transitive`) ->
-  format gate -> package -> GitHub release. Version from Conventional Commits
-  via GitVersion (`GitVersion.MsBuild` pinned to exactly `6.8.2`: a `6.*` range
-  lets an upstream major silently change how the *version number itself* is
-  computed).
+- `.github/workflows/release.yml` (push to main), in the order the steps run:
+  vulnerable-package gate (`dotnet restore`, then
+  `dotnet list package --vulnerable --include-transitive --format json`, and a
+  non-empty finding list fails the release — the bare command prints findings
+  and exits 0, so the verdict is read from the JSON) -> resolve version + tag ->
+  code-analysis gate -> test gate -> `Build-Release.ps1` -> GitHub release with
+  the `.pext` attached. There is no format gate here; that gate is on the pull
+  request. Version from Conventional Commits via GitVersion
+  (`GitVersion.MsBuild` pinned to exactly `6.8.2`: a `6.*` range lets an
+  upstream major silently change how the *version number itself* is computed).
 - `.github/workflows/commitlint.yml` (pull request): commit-message gate plus
   the `dotnet format whitespace|style --verify-no-changes` gate (`--verify-changes`
   is not a flag in SDK 8; `--verify-no-changes` is the real one).

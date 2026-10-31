@@ -65,9 +65,53 @@ jobs:
         # on a package with a known advisory. The plugin parses hostile web
         # input inside System.Text.Json's code path, so an unpatched transitive
         # dependency is part of the attack surface, not a hygiene note.
+        #
+        # The bare command is not a gate, measured rather than assumed:
+        #   - it reads obj/project.assets.json, so on a runner that has not
+        #     restored yet it exits 1 with "No assets file was found". Release
+        #     run #1 died here for exactly that reason and every later step
+        #     (tag, release) was skipped.
+        #   - when findings do exist it prints them and still exits 0
+        #     (dotnet/sdk#16852), so the command alone would ship an advisory
+        #     dependency while reporting success.
+        # So: restore first, read the findings out of --format json, and let a
+        # non-empty list stop the release. Both directions checked locally - the
+        # plugin project passes from a deleted obj/, a project pinning
+        # System.Text.RegularExpressions 4.3.0 fails with 3 findings.
+        shell: pwsh
         run: |
-          cd source
-          dotnet list package --vulnerable --include-transitive
+          $proj = "source/Playnite.VRMods.csproj"
+          dotnet restore $proj
+          $audit = dotnet list $proj package --vulnerable `
+            --include-transitive --format json | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "package audit failed: $audit" }
+          $json = $audit | ConvertFrom-Json
+          # Fail closed: an audit that names no project is not a pass.
+          if (-not $json.projects) {
+            throw "audit named no project - refusing an unaudited release"
+          }
+          $findings = @()
+          foreach ($p in $json.projects) {
+            foreach ($fw in @($p.frameworks)) {
+              # A clean project reports no frameworks section at all.
+              if (-not $fw) { continue }
+              $pkgs = @($fw.topLevelPackages)
+              $pkgs += @($fw.transitivePackages)
+              foreach ($pkg in $pkgs) {
+                foreach ($vuln in @($pkg.vulnerabilities)) {
+                  $line = $pkg.id + " " + $pkg.resolvedVersion
+                  $line += " [" + $vuln.severity + "] " + $vuln.advisoryurl
+                  $findings += $line
+                }
+              }
+            }
+          }
+          if ($findings.Count -gt 0) {
+            $findings | ForEach-Object { Write-Host $_ }
+            Write-Host "::error::vulnerable dependency ($($findings.Count))"
+            exit 1
+          }
+          Write-Host "No vulnerable packages in the dependency graph."
 
       - name: Resolve version + tag
         id: ver
