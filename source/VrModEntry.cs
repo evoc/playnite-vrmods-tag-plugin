@@ -44,6 +44,14 @@ namespace Playnite.VRMods
         private const int MaxSteamAppIdLength = 32;
 
         /// <summary>
+        /// Longest all-digit value that can still be a Steam App ID. Every App ID issued so far fits
+        /// in ten digits, and the game side of the comparison publishes keys no longer than this, so
+        /// a longer digit run is only ever compared against nothing. It is kept for the listing
+        /// identity (see <see cref="DecisionKeyComponent"/>) and excluded from matching.
+        /// </summary>
+        private const int MaxSteamAppIdDigits = 10;
+
+        /// <summary>
         /// Truncates to <paramref name="maxLength"/> (null stays null - an absent field is not an
         /// empty field, and the duplicate merge treats null as "not yet provided").
         /// </summary>
@@ -52,6 +60,48 @@ namespace Playnite.VRMods
             if (value == null || value.Length <= maxLength)
                 return value;
             return value.Substring(0, maxLength);
+        }
+
+        /// <summary>
+        /// Puts a scraped App ID into the one form this plugin compares and keys on: trimmed, and an
+        /// all-digit value without leading zeros (" 00712345 " is the same product as "712345", and a
+        /// decision recorded for one has to be readable for the other).
+        ///
+        /// A value that is not all digits is KEPT, not dropped. It is still the most stable identity a
+        /// listing can have - it survives the site renaming the listing, which a name does not - and it
+        /// cannot produce a match anyway, because the game side only ever publishes digit keys.
+        /// </summary>
+        private static string? NormalizeSteamAppId(string? value)
+        {
+            if (value == null)
+                return null;
+
+            var trimmed = value.Trim();
+            if (trimmed.Length == 0)
+                return null;
+
+            trimmed = Truncate(trimmed, MaxSteamAppIdLength)!;
+            if (!IsAllDigits(trimmed))
+                return trimmed;
+
+            var firstSignificant = 0;
+            while (firstSignificant < trimmed.Length - 1 && trimmed[firstSignificant] == '0')
+                firstSignificant++;
+
+            // App ID 0 is not a product; a field that says "no id" has to read as no id.
+            return trimmed[firstSignificant] == '0' ? null : trimmed.Substring(firstSignificant);
+        }
+
+        private static bool IsAllDigits(string value)
+        {
+            if (value.Length == 0)
+                return false;
+            for (var i = 0; i < value.Length; i++)
+            {
+                if (value[i] < '0' || value[i] > '9')
+                    return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -214,19 +264,32 @@ namespace Playnite.VRMods
         /// Used for exact matching against Playnite games' Steam links.
         /// Example: "1234567" for https://store.steampowered.com/app/1234567/
         /// Null if the source does not provide this information.
-        /// Values longer than <see cref="MaxSteamAppIdLength"/> are truncated: a value that long
-        /// cannot be a real App ID, and it is attacker-chosen text.
+        /// A value is stored in canonical form (see <see cref="NormalizeSteamAppId"/>); values longer
+        /// than <see cref="MaxSteamAppIdLength"/> are truncated: a value that long cannot be a real
+        /// App ID, and it is attacker-chosen text.
         /// </summary>
         public string? SteamAppId
         {
             get => _steamAppId;
             set
             {
-                _steamAppId = Truncate(value, MaxSteamAppIdLength);
+                _steamAppId = NormalizeSteamAppId(value);
+                _steamAppIdIsNumeric = _steamAppId != null
+                    && _steamAppId.Length <= MaxSteamAppIdDigits
+                    && IsAllDigits(_steamAppId);
                 _decisionKeyComponent = null;
             }
         }
         private string? _steamAppId;
+        private bool _steamAppIdIsNumeric;
+
+        /// <summary>
+        /// The App ID in the form that can compare against a Playnite game's own App ID, or null when
+        /// this listing has nothing comparable. Split from <see cref="SteamAppId"/> on purpose: the raw
+        /// value is the listing's identity, this is the matching key, and a scraped value that is not a
+        /// plausible App ID has to keep the first without gaining the second.
+        /// </summary>
+        public string? SteamAppIdForMatch => _steamAppIdIsNumeric ? _steamAppId : null;
 
         /// <summary>
         /// The ID of the source this entry came from (e.g., "RototRobot", "Flat2VR").
@@ -422,15 +485,32 @@ namespace Playnite.VRMods
             if (!string.IsNullOrWhiteSpace(appId))
                 return "steam:" + appId!.Trim();
 
-            var url = SourceUrl;
-            if (url != null && System.Uri.TryCreate(url, System.UriKind.Absolute, out var parsed)
-                && !string.IsNullOrEmpty(parsed.Host))
+            var urlComponent = UrlDecisionComponent;
+            if (urlComponent != null)
+                return urlComponent;
+
+            return GameName;
+        }
+
+        /// <summary>
+        /// The identity this listing would have if it carried no App ID: its own page, with scheme,
+        /// query and fragment dropped. Published on its own because a listing that GAINS an App ID - a
+        /// source that starts publishing ids for a page it used to describe by URL alone - has its
+        /// existing decisions filed under this shape, and the scan has to be able to find them to move
+        /// them. Null when the listing has no page of its own.
+        /// </summary>
+        public string? UrlDecisionComponent
+        {
+            get
             {
+                var url = SourceUrl;
+                if (url == null || !System.Uri.TryCreate(url, System.UriKind.Absolute, out var parsed)
+                    || string.IsNullOrEmpty(parsed.Host))
+                    return null;
+
                 var path = (parsed.AbsolutePath ?? string.Empty).TrimEnd('/');
                 return "url:" + parsed.Host.ToLowerInvariant() + path;
             }
-
-            return GameName;
         }
 
         /// <summary>

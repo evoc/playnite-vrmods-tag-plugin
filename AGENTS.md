@@ -217,6 +217,14 @@ host provides them and referencing them breaks loading.
 - Steam App ID match preferred; normalized name match as fallback. An App ID is a
   *matching* signal for every source that carries one, and the *decision identity* only
   where a listing is one game — see **Decisions** above for the identity order.
+- A **conflicting** App ID refuses a pairing the names would have made (both sides publish one and
+  none is shared); silence on either side is never a refusal, so listings from sources that publish
+  no App ID and library games with no Steam link match exactly as they always did. A refused pairing
+  is still surfaced as a **Suggested** row, flagged with the disagreement and ranked last.
+- A pairing that scores 1.00 **only** because the two records publish the same App ID is never
+  auto-accepted: `MatchScoreFor` (what a pairing is worth) and `NameScoreFor` (whether the plugin may
+  act on it) are separate, and only an exact name match applies tags without a decision. App-ID
+  matches arrive as **Pending** rows in the scan pass and the review pass alike.
 - **No substring matching** — a proper substring scores -1 (kills
   DOOM / DOOM Eternal). On top, a numeric/roman **identifier guard**:
   different edition identifiers score -1 (*Street Fighter 6* vs *SF V*,

@@ -221,19 +221,17 @@ namespace Playnite.VRMods
                 };
 
                 // The site sends a numeric steamAppId only for games it can resolve; the rest
-                // arrive as the string "$undefined" (or are missing). Those games fall back to
-                // name matching, so a missing id is not an error - just count them (one line,
-                // not one per game).
-                if (game.TryGetProperty("steamAppId", out JsonElement sid)
-                    && sid.ValueKind == JsonValueKind.Number
-                    && sid.TryGetInt64(out long app))
-                {
-                    entry.SteamAppId = app.ToString(CultureInfo.InvariantCulture);
-                }
+                // arrive as the string "$undefined" (or are missing). A value in the other JSON type
+                // is read for what it says, not for which type it arrived in: a quoted run of digits
+                // is the same statement the unquoted number makes ("this listing is Steam product N"),
+                // and quoted text that is not a number says nothing about a Steam product. Those
+                // listings fall back to name matching, so a missing id is not an error - just count
+                // them (one line, not one per game).
+                var steamAppId = ReadSteamAppId(game);
+                if (steamAppId != null)
+                    entry.SteamAppId = steamAppId;
                 else
-                {
                     withoutSteamId++;
-                }
 
                 entries.Add(entry);
             }
@@ -244,6 +242,41 @@ namespace Playnite.VRMods
                 LogRun($"{withoutSteamId} games without steamid");
             LogRun($"Parsed {entries.Count} games from the /mods catalog ({skipped} skipped)");
             return entries;
+        }
+
+        /// <summary>
+        /// The catalog game's Steam App ID as a product id, or null when the site did not give one.
+        ///
+        /// A JSON number counts when it is an integer above zero. A JSON string counts only when it
+        /// parses as such an integer: "1234567" and "001234567" both name product 1234567, while the
+        /// site's placeholder for a game it could not resolve ("$undefined"), a negative, a zero and
+        /// any other text name no Steam product.
+        /// </summary>
+        private static string? ReadSteamAppId(JsonElement game)
+        {
+            if (!game.TryGetProperty("steamAppId", out JsonElement sid))
+                return null;
+
+            switch (sid.ValueKind)
+            {
+                case JsonValueKind.Number:
+                    return sid.TryGetInt64(out long app) && app > 0
+                        ? app.ToString(CultureInfo.InvariantCulture)
+                        : null;
+
+                case JsonValueKind.String:
+                    // NumberStyles.Integer on purpose: .NET Framework has no TryParse(string,
+                    // IFormatProvider, out long) overload, and this one already allows the surrounding
+                    // whitespace and a leading sign (the sign is rejected below by requiring a positive
+                    // value).
+                    return long.TryParse(sid.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture,
+                        out long quoted) && quoted > 0
+                        ? quoted.ToString(CultureInfo.InvariantCulture)
+                        : null;
+
+                default:
+                    return null;   // null / true / false / object / array: not an id
+            }
         }
 
         /// <summary>

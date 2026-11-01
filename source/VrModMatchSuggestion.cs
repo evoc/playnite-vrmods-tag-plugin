@@ -38,14 +38,24 @@ namespace Playnite.VRMods
         /// </summary>
         public float DisplayScore { get; }
 
+        /// <summary>
+        /// Whether the two sides name DIFFERENT Steam products (each publishes an App ID and none is
+        /// shared). The automatic matching path refuses such a pair; the row is still offered because
+        /// a name that agrees while the ids disagree is a question for the owner of the library, and
+        /// <see cref="Reason"/> names both ids. Conflicted candidates rank behind every non-conflicted
+        /// one, so a suggestion never reads as a recommendation the plugin itself would not act on.
+        /// </summary>
+        public bool SteamIdsDisagree { get; }
+
         internal VrModMatchSuggestion(Game game, string sourceGameName, string reason,
-            TokenRunKind kind, float displayScore)
+            TokenRunKind kind, float displayScore, bool steamIdsDisagree = false)
         {
             Game = game ?? throw new ArgumentNullException(nameof(game));
             SourceGameName = sourceGameName ?? string.Empty;
             Reason = reason ?? string.Empty;
             Kind = kind;
             DisplayScore = displayScore;
+            SteamIdsDisagree = steamIdsDisagree;
         }
     }
 }

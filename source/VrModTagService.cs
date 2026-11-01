@@ -95,7 +95,19 @@ namespace Playnite.VRMods
         // each store duplicate is independently matched, tagged, and decided (by game Id).
         private ConcurrentDictionary<string, List<Game>>? _gameNameCache;
         private Dictionary<Guid, Game>? _gameIdCache;
-        private ConcurrentDictionary<string, Game>? _steamCache;
+        /// <summary>
+        /// Steam App ID -> EVERY game that claims it. One App ID can be claimed by several Game rows
+        /// (the same title imported twice, a base game and its GOTY re-import): 55 App IDs in one real
+        /// library belong to more than one row. A single game per id made all the others unreachable by
+        /// App ID while the name index below deliberately returns them all.
+        /// </summary>
+        private ConcurrentDictionary<string, List<Game>>? _steamCache;
+        /// <summary>
+        /// Game Id -> the Steam App IDs that game claims. The reverse map above can answer "which game
+        /// has this id" but not "which ids does THIS game claim", and refusing a match because the two
+        /// sides name different Steam products needs the second question.
+        /// </summary>
+        private Dictionary<Guid, List<string>>? _gameSteamAppIds;
         private ConcurrentDictionary<string, string>? _normalizedGameCache;
         /// <summary>
         /// Normalized source-catalog entry names, rebuilt per scan. A catalog entry name is one of a
@@ -612,7 +624,8 @@ namespace Playnite.VRMods
         {
             _gameNameCache = new ConcurrentDictionary<string, List<Game>>();
             _gameIdCache = new Dictionary<Guid, Game>();
-            _steamCache = new ConcurrentDictionary<string, Game>();
+            _steamCache = new ConcurrentDictionary<string, List<Game>>(StringComparer.Ordinal);
+            _gameSteamAppIds = new Dictionary<Guid, List<string>>();
             _normalizedGameCache = new ConcurrentDictionary<string, string>();
             _normalizedEntryCache = new Dictionary<string, string>(StringComparer.Ordinal);
             _tagCache = new Dictionary<string, Tag>(StringComparer.OrdinalIgnoreCase);
@@ -629,16 +642,17 @@ namespace Playnite.VRMods
                 _gameIdCache[game.Id] = game;
                 _normalizedGameCache.TryAdd(game.Id.ToString(), normalizedName);
 
-                if (game.Links != null)
+                // What this game IS in Steam terms, computed once per game: its store links, plus the
+                // provider id the Steam library integration wrote when it imported the game. Both sides
+                // are canonical digits, so they compare against each other and against a source entry's
+                // App ID without either side guessing about slashes, slugs, tracking parameters or
+                // leading zeros.
+                var gameAppIds = ComputeGameSteamAppIds(game);
+                if (gameAppIds.Count > 0)
                 {
-                    foreach (var link in game.Links)
-                    {
-                        if (link.Url.StartsWith("https://store.steampowered.com/app/", StringComparison.Ordinal))
-                        {
-                            var appId = link.Url.Substring("https://store.steampowered.com/app/".Length).TrimEnd('/');
-                            _steamCache.TryAdd(appId, game);
-                        }
-                    }
+                    _gameSteamAppIds[game.Id] = gameAppIds;
+                    foreach (var appId in gameAppIds)
+                        _steamCache.GetOrAdd(appId, _ => new List<Game>()).Add(game);
                 }
 
                 // Word -> game. A name can carry the same word twice ("Warling Warling"); the posting
@@ -688,20 +702,43 @@ namespace Playnite.VRMods
         }
 
         /// <summary>
-        /// The listing half of a decision key, in both shapes a stored key can have: the listing's
-        /// stable identity component (what this plugin writes today) and its raw display name (what it
-        /// wrote before listings carried a stable identity — which is what sits in the settings file of
-        /// anybody upgrading from that version). A saved decision is only worth having if the scan can
-        /// FIND it, and the scan does not get to choose which version wrote the file.
+        /// Every identity component this listing could have been filed under, current shape first:
+        /// its stable identity component (what this plugin writes today), its page (what it wrote before
+        /// a source started publishing a Steam App ID for it, which is what sits in the settings file of
+        /// anybody whose listings gained ids at the last upgrade), and its raw display name (what it
+        /// wrote before keys carried any identity at all).
+        ///
+        /// A saved decision is only worth having if the scan can FIND it, and the scan does not get to
+        /// choose which version wrote the file. Both readers of "did somebody already decide about this
+        /// listing" - the decision lookup and the decided-mapping index - go through this one list, so a
+        /// shape one of them knows is not a shape the other silently misses: a missed shape is an
+        /// accepted mapping back in review, and a game losing the tags and the deep link that Accept
+        /// bought.
         /// </summary>
+        private static List<string> ListingIdentitiesFiledUnder(VrModEntry entry)
+        {
+            var current = entry.DecisionKeyComponent;
+            var identities = new List<string>(3) { current };
+
+            var urlComponent = entry.UrlDecisionComponent;
+            if (!string.IsNullOrEmpty(urlComponent)
+                && !string.Equals(urlComponent, current, StringComparison.Ordinal))
+                identities.Add(urlComponent!);
+
+            var name = entry.GameName ?? string.Empty;
+            if (!string.IsNullOrEmpty(name)
+                && !string.Equals(name, current, StringComparison.Ordinal))
+                identities.Add(name);
+
+            return identities;
+        }
+
         private static List<string> StoredListingKeys(VrModEntry entry)
         {
             var sourceId = entry.SourceId ?? string.Empty;
-            var identity = entry.DecisionKeyComponent;
-            var name = entry.GameName ?? string.Empty;
-            var keys = new List<string>(2) { $"{sourceId}||{identity}" };
-            if (identity != name)
-                keys.Add($"{sourceId}||{name}");
+            var keys = new List<string>(3);
+            foreach (var identity in ListingIdentitiesFiledUnder(entry))
+                keys.Add($"{sourceId}||{identity}");
             return keys;
         }
 
@@ -840,6 +877,204 @@ namespace Playnite.VRMods
         }
 
         /// <summary>
+        /// Playnite's built-in Steam library integration. A game it imports carries its Steam App ID in
+        /// <c>Game.GameId</c> as well as in a store link, and that provider id is written by the host:
+        /// it survives any edit to the game's Links, which are something other extensions and the user
+        /// both touch.
+        ///
+        /// The id is written out here rather than looked up: the SDK ships the <c>BuiltinExtension</c>
+        /// enum but not the table that maps these ids, and that table sits in Playnite's own assembly,
+        /// which an extension must not reference.
+        /// </summary>
+        internal static readonly Guid SteamLibraryPluginId = Guid.Parse("CB91DFC9-B977-43BF-8E70-55F46E410FAB");
+
+        /// <summary>
+        /// Longest digit run that can still be a Steam App ID. Every id issued so far fits, and both
+        /// sides of the comparison publish nothing longer, so a longer run is only ever noise.
+        /// </summary>
+        private const int MaxSteamAppIdDigits = 10;
+
+        private static bool IsSteamStoreHost(Uri uri)
+        {
+            var host = uri.Host ?? string.Empty;
+            return string.Equals(host, "steampowered.com", StringComparison.OrdinalIgnoreCase)
+                || host.EndsWith(".steampowered.com", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// The Steam App ID a store link points at, canonicalised.
+        ///
+        /// This replaces "starts with https://store.steampowered.com/app/, then take the rest of the
+        /// string", and the rest of the string was the problem. Measured on one real library, 171 of its
+        /// 1 208 Steam links carried something after the id - the store's own slug
+        /// (<c>/app/434120/Resident_Evil_4</c>), a tracking parameter (<c>/app/2443190/Pine_Creek_The_Book_of_Judith?beta=1</c>) -
+        /// or omitted the prefix this rule insisted on (<c>https://steampowered.com/app/1160220/Paradise_Killer</c>).
+        /// A key like <c>434120/Resident_Evil_4</c> can never equal the <c>434120</c> a parser scraped,
+        /// so those games were only ever matchable by name.
+        ///
+        /// What is read instead: an absolute http(s) URL on a steampowered.com host, whose PATH has an
+        /// <c>app</c> segment followed by digits. Slug, query, fragment, an <c>agecheck</c> hop, a missing
+        /// <c>store.</c> and a trailing slash are all noise to be ignored.
+        /// </summary>
+        internal static bool TryGetSteamAppIdFromLink(string? url, out string? appId)
+        {
+            appId = null;
+            var raw = (url ?? string.Empty).Trim();
+            if (raw.Length == 0)
+                return false;
+
+            Uri? parsed = null;
+            if (Uri.TryCreate(raw, UriKind.Absolute, out var asWritten) && IsSteamStoreHost(asWritten))
+                parsed = asWritten;
+            else if (Uri.TryCreate("https://" + raw, UriKind.Absolute, out var withScheme) && IsSteamStoreHost(withScheme))
+                parsed = withScheme;
+            if (parsed == null)
+                return false;
+
+            var segments = (parsed.AbsolutePath ?? string.Empty).Split('/');
+            for (var i = 0; i + 1 < segments.Length; i++)
+            {
+                if (!string.Equals(segments[i], "app", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                return TryCanonicalizeAppId(segments[i + 1], out appId);
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// The provider id Playnite's Steam import recorded for a game (<c>Game.GameId</c>), when it is
+        /// one. No link parsing involved - this is the copy the host wrote itself.
+        /// </summary>
+        internal static bool TryGetSteamAppIdFromProviderId(string? gameId, out string? appId)
+            => TryCanonicalizeAppId((gameId ?? string.Empty).Trim(), out appId);
+
+        /// <summary>
+        /// Digits only, no leading zeros, no longer than a real App ID can be. Anything else never
+        /// becomes a key: a key that cannot be a Steam App ID is a key that can only ever be missed.
+        /// </summary>
+        private static bool TryCanonicalizeAppId(string value, out string? appId)
+        {
+            appId = null;
+            if (value.Length == 0 || value.Length > MaxSteamAppIdDigits)
+                return false;
+            for (var i = 0; i < value.Length; i++)
+            {
+                if (value[i] < '0' || value[i] > '9')
+                    return false;
+            }
+
+            var canonical = value.TrimStart('0');
+            if (canonical.Length == 0)
+                return false;           // App ID 0 is not a product
+            appId = canonical;
+            return true;
+        }
+
+        /// <summary>
+        /// Every Steam App ID one game claims: its store links, plus the provider id when the Steam
+        /// library integration imported it. Deduped, in first-seen order.
+        /// </summary>
+        private static List<string> ComputeGameSteamAppIds(Game game)
+        {
+            var ids = new List<string>(2);
+            var links = game.Links;
+            if (links != null)
+            {
+                foreach (var link in links)
+                {
+                    if (link == null || !TryGetSteamAppIdFromLink(link.Url, out var appId) || appId == null)
+                        continue;
+                    if (!ids.Contains(appId))
+                        ids.Add(appId);
+                }
+            }
+
+            if (game.PluginId == SteamLibraryPluginId
+                && TryGetSteamAppIdFromProviderId(game.GameId, out var providerId)
+                && providerId != null && !ids.Contains(providerId))
+            {
+                ids.Add(providerId);
+            }
+
+            return ids;
+        }
+
+        /// <summary>
+        /// The score a pairing carries into a decision or a review row: a shared Steam App ID scores as
+        /// itself, everything else is a name score. Every place that judges a pairing must use this, or
+        /// the two rules contradict each other in the middle of a scan: <see cref="FindGamesByIndex"/>
+        /// finds a pairing on App ID, and a branch that then re-scores it by name alone drops the exact
+        /// pairing the App ID found (a "Trageous Hallows" listing against the library's "Outlast 2" -
+        /// names that share nothing, product identifiers that share everything).
+        /// </summary>
+        private float MatchScoreFor(VrModEntry entry, Game game)
+        {
+            var appId = entry.SteamAppIdForMatch;
+            if (appId != null && SteamIdsMatch(appId, GetGameSteamAppIds(game)))
+                return 1.0f;
+            return NameScoreFor(entry, game);
+        }
+
+        /// <summary>
+        /// The name-only score of a pairing — the one score the plugin may act on without asking.
+        /// Kept apart from <see cref="MatchScoreFor"/> on purpose: a shared App ID scores the pairing
+        /// as itself (it is not a fuzzy guess, and it ranks and reviews as 1.00), but it is a claim
+        /// about the product, not about whether this listing is a mod the user wants applied. Every
+        /// pairing that exists only because of an App ID stays Pending, so new matches are seen and
+        /// decided instead of appearing in the library on their own.
+        /// </summary>
+        private float NameScoreFor(VrModEntry entry, Game game)
+            => VrModNameMatcher.GetMatchScore(entry.GameName, game.Name, _settings.FuzzyMatchThreshold);
+
+        /// <summary>
+        /// The App IDs one game claims, from the index built for this scan, recomputed when that index
+        /// does not know the game (one added after the index was built).
+        /// </summary>
+        private List<string> GetGameSteamAppIds(Game game)
+        {
+            var map = _gameSteamAppIds;
+            if (map != null && map.TryGetValue(game.Id, out var known))
+                return known;
+            return ComputeGameSteamAppIds(game);
+        }
+
+        /// <summary>
+        /// Whether a listing and a game claim the same Steam product.
+        /// </summary>
+        private static bool SteamIdsMatch(string? entryAppId, List<string> gameAppIds)
+            => entryAppId != null && gameAppIds.Contains(entryAppId);
+
+        /// <summary>
+        /// Whether a listing and a game name DIFFERENT Steam products. Decidable only when both sides
+        /// know an App ID: a listing from a name-only source, or a game with no Steam link and no Steam
+        /// import, has nothing to disagree with, and refusing on silence would switch off every match
+        /// those sources make today.
+        /// </summary>
+        private static bool SteamIdsConflict(string? entryAppId, List<string> gameAppIds)
+            => entryAppId != null && gameAppIds.Count > 0 && !gameAppIds.Contains(entryAppId);
+
+        private void LogSteamIdRefusal(VrModEntry entry, Game game, List<string> gameAppIds)
+        {
+            _logger.Debug($"VRMod Tag Service: Refused a name match between listing '{SafeLogText(entry.GameName)}' (Steam App ID {SafeLogText(entry.SteamAppIdForMatch ?? "none")}) and game '{SafeLogText(game.Name)}' (its App IDs: {(gameAppIds.Count == 0 ? "none" : string.Join(", ", gameAppIds))}). Each names a Steam product and they are not the same one.");
+        }
+
+        /// <summary>
+        /// The one answer to "is this listing this game": a Steam App ID both of them claim, or a name
+        /// score that reaches the threshold with no App ID disagreement between them. The game-driven
+        /// paths ask this directly; the entry-driven paths reach the same rules through
+        /// <see cref="FindGamesByIndex"/>, which is the same rules with the indexes attached.
+        /// </summary>
+        private static bool EntryMatchesGame(VrModEntry entry, string normalizedGame, List<string> gameAppIds, float threshold)
+        {
+            var entryAppId = entry.SteamAppIdForMatch;
+            if (SteamIdsMatch(entryAppId, gameAppIds))
+                return true;
+            if (SteamIdsConflict(entryAppId, gameAppIds))
+                return false;
+            return VrModNameMatcher.GetMatchScore(NormalizeForMatchFast(entry.GameName), normalizedGame, threshold) >= threshold;
+        }
+
+        /// <summary>
         /// Returns EVERY Playnite game this source entry matches, or an empty list when none.
         ///
         /// A source entry matches a game when they are the same game: identical normalized name
@@ -870,22 +1105,36 @@ namespace Playnite.VRMods
                 }
             }
 
-            // Steam App ID match (unique per game).
-            if (_steamCache != null && !string.IsNullOrEmpty(entry.SteamAppId)
-                && _steamCache.TryGetValue(entry.SteamAppId!, out var steamGame))
+            var entryAppId = entry.SteamAppIdForMatch;
+
+            // Steam App ID match: every game that claims this App ID (see _steamCache - a store
+            // duplicate claims the same id as the game it duplicates, and all of them are candidates,
+            // exactly as the name paths below return every game sharing a name).
+            if (_steamCache != null && entryAppId != null
+                && _steamCache.TryGetValue(entryAppId, out var steamGames))
             {
-                results.Add(steamGame);
+                foreach (var g in steamGames)
+                    AddUnique(results, g);
             }
 
             var normalizedEntry = NormalizeForMatchFast(entry.GameName);
             if (string.IsNullOrEmpty(normalizedEntry) || _gameNameCache == null)
                 return results;
 
-            // Exact normalized name: every game sharing it (store duplicates).
+            // Exact normalized name: every game sharing it (store duplicates), except one the App IDs
+            // say is a different product.
             if (_gameNameCache.TryGetValue(normalizedEntry, out var exactGames))
             {
                 foreach (var g in exactGames)
+                {
+                    var gameAppIds = GetGameSteamAppIds(g);
+                    if (SteamIdsConflict(entryAppId, gameAppIds))
+                    {
+                        LogSteamIdRefusal(entry, g, gameAppIds);
+                        continue;
+                    }
                     AddUnique(results, g);
+                }
                 return results;
             }
 
@@ -923,8 +1172,17 @@ namespace Playnite.VRMods
             if (bestKey != null && bestScore >= _settings.FuzzyMatchThreshold && _gameNameCache.TryGetValue(bestKey, out var bestGames))
             {
                 foreach (var g in bestGames)
+                {
+                    var gameAppIds = GetGameSteamAppIds(g);
+                    if (SteamIdsConflict(entryAppId, gameAppIds))
+                    {
+                        LogSteamIdRefusal(entry, g, gameAppIds);
+                        continue;
+                    }
                     AddUnique(results, g);
-                _logger.Debug($"VRMod Tag Service: matched '{SafeLogText(entry.GameName)}' to {results.Count} game(s) sharing normalized name '{bestKey}' (score: {bestScore:F2})");
+                }
+                if (results.Count > 0)
+                    _logger.Debug($"VRMod Tag Service: matched '{SafeLogText(entry.GameName)}' to {results.Count} game(s) sharing normalized name '{bestKey}' (score: {bestScore:F2})");
             }
 
             return results;
@@ -1010,6 +1268,7 @@ namespace Playnite.VRMods
 
             var candidates = new List<VrModMatchSuggestion>();
             var decidedCount = 0;
+            var entryAppId = entry.SteamAppIdForMatch;
             // A pair the ordinary matching path already produces is not a suggestion: it is already a
             // row, and the same game twice in one dialog reads as two facts about it. Callers only
             // ask for entries with no match at all, so in a scan this set is empty — the filter is
@@ -1036,18 +1295,34 @@ namespace Playnite.VRMods
                     continue;
                 }
 
-                candidates.Add(new VrModMatchSuggestion(game, entry.GameName, DescribeTokenRun(run),
+                var reason = DescribeTokenRun(run);
+                var gameAppIds = GetGameSteamAppIds(game);
+                var idsDisagree = SteamIdsConflict(entryAppId, gameAppIds);
+                if (idsDisagree)
+                {
+                    // The names say one product, the store ids say two. The automatic path refuses
+                    // this pairing outright (see FindGamesByIndex); here it is shown instead of
+                    // silently dropped, with both ids named, because "my library's Steam copy is not
+                    // the product that listing says" is a fact a person can settle and this plugin
+                    // cannot.
+                    reason = $"{reason}; their Steam App IDs disagree (the listing says {entryAppId}, this game says {string.Join(", ", gameAppIds)})";
+                }
+
+                candidates.Add(new VrModMatchSuggestion(game, entry.GameName, reason,
                     run.Kind, VrModNameMatcher.ComputeSimilarity(VrModNameMatcher.Normalize(entry.GameName),
-                        VrModNameMatcher.Normalize(game.Name))));
+                        VrModNameMatcher.Normalize(game.Name)), idsDisagree));
             }
 
             if (candidates.Count == 0)
                 return suggestions;
 
-            // Re-release wording first: that is the tier where the rules are closest to certain, and
-            // it is the one a person can accept without reading. Then by how much of the name agrees.
+            // A pair the App IDs refuse goes last: a suggestion is a recommendation-shaped row, and
+            // the plugin must not recommend what its own rules reject. Re-release wording first: that
+            // is the tier where the rules are closest to certain, and it is the one a person can
+            // accept without reading. Then by how much of the name agrees.
             var ranked = candidates
-                .OrderBy(c => c.Kind == TokenRunKind.SameProduct ? 0 : 1)
+                .OrderBy(c => c.SteamIdsDisagree ? 1 : 0)
+                .ThenBy(c => c.Kind == TokenRunKind.SameProduct ? 0 : 1)
                 .ThenByDescending(c => c.DisplayScore)
                 .ThenBy(c => c.Game.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
@@ -1260,10 +1535,16 @@ namespace Playnite.VRMods
                                     reviewMatches.Add(MakeReviewMatch(sourceId, entry, game, VrModNameMatcher.GetMatchScore(entry.GameName, game.Name, _settings.FuzzyMatchThreshold), MatchDecision.Rejected));
                                 break;
                             case MatchDecision.Pending:
-                                var score = VrModNameMatcher.GetMatchScore(entry.GameName, game.Name, _settings.FuzzyMatchThreshold);
+                                var score = MatchScoreFor(entry, game);
                                 if (score >= _settings.FuzzyMatchThreshold)
                                 {
-                                    if (reviewCallback == null)
+                                    // The threshold auto-apply policy stays exactly as it was for every
+                                    // pairing the name rules make. What it must not swallow is a pairing
+                                    // that scores 1.00 only because the two records publish the same
+                                    // Steam App ID: certain about the product, never decided as a mod.
+                                    var nameScore = NameScoreFor(entry, game);
+                                    var certainByAppIdOnly = score >= 1.0f && nameScore < 1.0f;
+                                    if (reviewCallback == null && !certainByAppIdOnly)
                                     {
                                         var appliedPending = ApplyEntryTags(game, entry);
                                         AddExpectedTags(game.Id, appliedPending);
@@ -1273,9 +1554,23 @@ namespace Playnite.VRMods
                                         statsBySource[sourceId] = entryStats;
                                         _logger.Debug($"VRMod Tag Service: Auto-applied (pending, no review) '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}' ({tagName})");
                                     }
+                                    else if (reviewCallback == null)
+                                    {
+                                        // No review dialog open, and applying it is not ours to do: hold
+                                        // it as pending review. Collected in pendingMatches so it is
+                                        // counted, reported, and kept out of stale-tag removal; the next
+                                        // Scan & Review puts it in front of the user.
+                                        pendingMatches.Add(MakeReviewMatch(sourceId, entry, game, score, MatchDecision.Pending));
+                                        entryStats.Matches++;
+                                        statsBySource[sourceId] = entryStats;
+                                        _lastSuggestions ??= new List<(string SourceName, string EntryName, string GameName, string Reason)>();
+                                        _lastSuggestions.Add((sourceId, entry.GameName, game.Name,
+                                            "shared Steam App ID; held for review until you accept it"));
+                                        _logger.Debug($"VRMod Tag Service: App-ID match held for review (not applied): '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}'");
+                                    }
                                     else
                                     {
-                                        var status = score >= 1.0f ? MatchDecision.Accepted : MatchDecision.Pending;
+                                        var status = nameScore >= 1.0f ? MatchDecision.Accepted : MatchDecision.Pending;
                                         var match = MakeReviewMatch(sourceId, entry, game, score, status);
                                         pendingMatches.Add(match);
                                         if (reviewAll)
@@ -1433,8 +1728,9 @@ namespace Playnite.VRMods
 
                     foreach (var game in games)
                     {
-                        var score = VrModNameMatcher.GetMatchScore(entry.GameName, game.Name, _settings.FuzzyMatchThreshold);
-                        var status = ReviewRowStatus(GetEntryDecision(sourceId, entry, game.Id), score, _settings.FuzzyMatchThreshold);
+                        var score = MatchScoreFor(entry, game);
+                        var status = ReviewRowStatus(GetEntryDecision(sourceId, entry, game.Id), score,
+                            NameScoreFor(entry, game) >= 1.0f, _settings.FuzzyMatchThreshold);
                         if (status == null)
                             continue;
                         matches.Add(MakeReviewMatch(sourceId, entry, game, score, status.Value));
@@ -1454,16 +1750,21 @@ namespace Playnite.VRMods
 
         /// <summary>
         /// The review-row status for a match built from a stored decision (the full "show all"
-        /// review list): Accepted and Rejected mappings become rows with their decision; a
-        /// Pending mapping becomes a row only when the score is at or above the threshold — an
-        /// exact match (1.00) as Accepted, anything else as Pending. A Pending mapping below
-        /// the threshold produces no row (null). Pure and testable.
+        /// review list). Accepted and Rejected mappings become rows with their decision. A Pending
+        /// mapping becomes a row only at or above the threshold, and the two scores are told apart:
+        /// <c>score</c> is what the pairing is <em>worth</em> (a shared Steam App ID makes it 1.00,
+        /// so it clears the threshold and is ranked as an exact pairing), <c>autoAccept</c> is
+        /// whether the plugin may <em>act</em> on it without a decision (the names match exactly).
+        /// A 1.00 that is 1.00 only because of an App ID is a row shown as Pending: the pairing is
+        /// certain, the decision is not the plugin's to make. A Pending mapping below the threshold
+        /// produces no row (null). Pure and testable.
         /// </summary>
         /// <param name="decision">The stored decision for the mapping (Pending = never decided).</param>
-        /// <param name="score">The match score (0–1).</param>
+        /// <param name="score">What the pairing is worth as a match (0–1).</param>
+        /// <param name="autoAccept">Whether the plugin may apply it with no decision (exact name match).</param>
         /// <param name="threshold">The fuzzy-match threshold (0–1).</param>
         /// <returns>The row status, or null for no row.</returns>
-        internal static MatchDecision? ReviewRowStatus(MatchDecision decision, float score, float threshold)
+        internal static MatchDecision? ReviewRowStatus(MatchDecision decision, float score, bool autoAccept, float threshold)
         {
             switch (decision)
             {
@@ -1474,7 +1775,7 @@ namespace Playnite.VRMods
                 default: // Pending: reviewable only at or above the threshold.
                     if (score < threshold)
                         return null;
-                    return score >= 1.0f ? MatchDecision.Accepted : MatchDecision.Pending;
+                    return autoAccept ? MatchDecision.Accepted : MatchDecision.Pending;
             }
         }
 
@@ -1489,14 +1790,13 @@ namespace Playnite.VRMods
             => entry.MakeDecisionKey(sourceId, gameId);
 
         /// <summary>
-        /// Decision lookup for a source entry, including the one-time carry-forward of a decision that
-        /// was stored before decision keys carried a listing identity: when the identity-shaped key is
-        /// empty but the entry's own name still matches a stored key, that stored decision (with its
-        /// timestamp and tag baseline) is moved onto the identity key and returned.
+        /// Decision lookup for a source entry, including the carry-forward of a decision filed under a
+        /// shape this listing no longer has: the stored decision (with its timestamp and its tag
+        /// baseline) is moved onto the listing's current identity key and returned.
         ///
-        /// A scan is the only place that can recognise a legacy key, because it is the only place that
-        /// holds an entry whose name is the one the legacy key was built from. Doing it here means the
-        /// next time the site renames that listing there is nothing left to lose.
+        /// A scan is the only place that can recognise an older key, because it is the only place that
+        /// holds an entry whose URL and name are the ones that key was built from. Doing it here means
+        /// the next time the site renames that listing there is nothing left to lose.
         /// </summary>
         private bool TryGetEntryDecision(string sourceId, VrModEntry entry, Guid gameId,
             out MatchDecision decision)
@@ -1505,23 +1805,43 @@ namespace Playnite.VRMods
             if (_settings.TryGetDecisionByKey(identityKey, out decision))
                 return true;
 
-            if (entry.DecisionKeyComponent == entry.GameName)
+            foreach (var legacyKey in LegacyEntryDecisionKeys(sourceId, entry, gameId))
             {
-                // This listing offers no identity of its own, so the key the settings already tried
-                // IS the name key: there is no legacy shape left to look for.
-                decision = MatchDecision.Pending;
-                return false;
+                if (!_settings.TryGetDecisionByKey(legacyKey, out decision))
+                    continue;
+                _settings.TryRekeyDecision(legacyKey, identityKey);
+                return true;
             }
 
-            var legacyKey = VrModNameMatcher.MakeDecisionKey(sourceId, entry.GameName, gameId);
-            if (!_settings.TryGetDecisionByKey(legacyKey, out decision))
-            {
-                decision = MatchDecision.Pending;
-                return false;
-            }
+            decision = MatchDecision.Pending;
+            return false;
+        }
 
-            _settings.TryRekeyDecision(legacyKey, identityKey);
-            return true;
+        /// <summary>
+        /// The keys a decision about this listing could have been filed under before the listing had the
+        /// identity it has now, oldest shape first:
+        ///
+        /// - the listing's URL, for a listing that only gained an App ID because the source started
+        ///   publishing one for it (a store link the site added, an id a parser started reading out of
+        ///   the page). Those decisions are real and they are under the URL; a scan that looks only for
+        ///   the App ID key reads them as "nobody decided" and puts a finished match back into review.
+        /// - the listing's display name, which is what this plugin wrote before keys carried any
+        ///   identity at all.
+        ///
+        /// A shape that IS the current key is skipped, and so is an empty listing slot: a decision
+        /// filed under an empty component is one no lookup can read again.
+        /// </summary>
+        private static List<string> LegacyEntryDecisionKeys(string sourceId, VrModEntry entry, Guid gameId)
+        {
+            var current = entry.DecisionKeyComponent;
+            var keys = new List<string>(2);
+            foreach (var identity in ListingIdentitiesFiledUnder(entry))
+            {
+                if (string.Equals(identity, current, StringComparison.Ordinal))
+                    continue;           // the current shape is tried first by the caller
+                keys.Add(VrModNameMatcher.MakeDecisionKey(sourceId, identity, gameId));
+            }
+            return keys;
         }
 
         /// <summary>
@@ -1738,12 +2058,20 @@ namespace Playnite.VRMods
             var normalizedGame = GetNormalizedGameName(game);
             var threshold = _settings.FuzzyMatchThreshold;
 
+            // What this game IS in Steam terms, worked out once for the whole catalog walk. A shared
+            // App ID is a match on its own terms; a disagreement about App IDs is a refusal, whatever
+            // the two names score.
+            var gameAppIds = GetGameSteamAppIds(game);
+
             foreach (var kvp in allEntries)
             {
                 var sourceId = kvp.Key;
 
                 foreach (var entry in kvp.Value)
                 {
+                    var entryAppId = entry.SteamAppIdForMatch;
+                    var steamIdMatch = SteamIdsMatch(entryAppId, gameAppIds);
+
                     // Entries the user has never reviewed are the overwhelming majority of this loop,
                     // and almost all of them cannot reach the threshold with this game's name: skip
                     // those on the length bound before doing any name work.
@@ -1752,8 +2080,13 @@ namespace Playnite.VRMods
                     // pruning those would silently drop a decision the user made.
                     if (!TryGetEntryDecision(sourceId, entry, game.Id, out var decision))
                     {
+                        // An App ID match needs no name similarity at all. A listing called "Morrowind"
+                        // and a game called "The Elder Scrolls III: Morrowind GOTY Edition" are the same
+                        // product, and the App ID each side publishes is what says so - the length bound
+                        // below would never have compared them.
                         var normalizedEntry = GetNormalizedEntryName(entry.GameName);
-                        if (!VrModNameMatcher.CanReachSimilarity(normalizedEntry, normalizedGame, threshold))
+                        if (!steamIdMatch
+                            && !VrModNameMatcher.CanReachSimilarity(normalizedEntry, normalizedGame, threshold))
                             continue;
                         decision = MatchDecision.Pending;
                     }
@@ -1772,9 +2105,22 @@ namespace Playnite.VRMods
                             _logger.Info($"VRMod Tag Service: Auto-skipped (rejected) '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}'");
                             break;
                         case MatchDecision.Pending:
-                            var score = VrModNameMatcher.GetMatchScoreNormalized(GetNormalizedEntryName(entry.GameName), normalizedGame, threshold);
+                            // An App ID match scores as itself: it is not a fuzzy guess, it is the
+                            // product identifier both sides publish.
+                            var score = steamIdMatch
+                                ? 1.0f
+                                : VrModNameMatcher.GetMatchScoreNormalized(GetNormalizedEntryName(entry.GameName), normalizedGame, threshold);
                             if (score >= threshold)
                             {
+                                // The names agree and the App IDs do not: that is a refusal, not a near
+                                // miss. It is asked only of pairs nobody has decided about - a saved
+                                // decision is the user's answer to exactly this question.
+                                if (!steamIdMatch && SteamIdsConflict(entryAppId, gameAppIds))
+                                {
+                                    LogSteamIdRefusal(entry, game, gameAppIds);
+                                    continue;
+                                }
+
                                 if (reviewCallback == null)
                                 {
                                     foreach (var cat in entry.Categories) currentMatchedCategories.Add(cat);
@@ -1802,7 +2148,8 @@ namespace Playnite.VRMods
                                         Qualities = entry.Qualities,
                                         Motions = entry.Motions,
                                         ModStatuses = entry.Statuses,
-                                        Status = score >= 1.0f ? MatchDecision.Accepted : MatchDecision.Pending
+                                        Status = NameScoreFor(entry, game) >= 1.0f
+                                            ? MatchDecision.Accepted : MatchDecision.Pending
                                     });
                                 }
                             }
@@ -2360,12 +2707,12 @@ namespace Playnite.VRMods
         public IEnumerable<VrModEntry> GetVrModEntriesForGame(Game game, IEnumerable<VrModEntry> allEntries)
         {
             var normalizedGame = GetNormalizedGameName(game);
+            var threshold = _settings.FuzzyMatchThreshold;
+            var gameAppIds = GetGameSteamAppIds(game);
 
             foreach (var entry in allEntries)
             {
-                var normalizedEntry = NormalizeForMatchFast(entry.GameName);
-
-                if (VrModNameMatcher.GetMatchScore(normalizedEntry, normalizedGame, _settings.FuzzyMatchThreshold) >= _settings.FuzzyMatchThreshold)
+                if (EntryMatchesGame(entry, normalizedGame, gameAppIds, threshold))
                 {
                     yield return entry;
                 }
@@ -2405,12 +2752,12 @@ namespace Playnite.VRMods
                 return tags;
 
             var normalizedGame = GetNormalizedGameName(game);
+            var threshold = _settings.FuzzyMatchThreshold;
+            var gameAppIds = GetGameSteamAppIds(game);
 
             foreach (var entry in allEntries)
             {
-                var normalizedEntry = NormalizeForMatchFast(entry.GameName);
-
-                if (VrModNameMatcher.GetMatchScore(normalizedEntry, normalizedGame, _settings.FuzzyMatchThreshold) >= _settings.FuzzyMatchThreshold)
+                if (EntryMatchesGame(entry, normalizedGame, gameAppIds, threshold))
                 {
                     // One category tag per (non-catalog) category — a mod may have several.
                     foreach (var category in entry.Categories)

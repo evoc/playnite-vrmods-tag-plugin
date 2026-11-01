@@ -238,10 +238,16 @@ namespace PlayniteVRMods.Tests.Integration
             _registry.Register(parser);
 
             var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
-            service.RunFullScanAsync().GetAwaiter().GetResult();
+            var rows = new List<VrModReviewMatchEntry>();
+            service.RunFullScanAsync(rows.AddRange).GetAwaiter().GetResult();
 
-            Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
-            AssertTagsContain("VRMod Head Tracked");
+            // The listing names the mod, the game names the product, and the two publish the same Steam
+            // App ID. That is a match worth showing - and a decision worth leaving to the user.
+            var row = rows.FirstOrDefault(r => r.PlayniteGame.Id == game.Id);
+            Assert.That(row, Is.Not.Null, "the App ID both sides publish pairs them");
+            Assert.That(row.Status, Is.EqualTo(MatchDecision.Pending),
+                "a new match arrives as something to look at, not as tags already written");
+            Assert.That(game.TagIds, Is.Empty, "nothing is applied to a pairing nobody has decided on");
         }
 
         [Test]

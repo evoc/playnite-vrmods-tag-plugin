@@ -88,23 +88,31 @@ public class Link
 
 ### Steam App ID Extraction
 
-Steam App IDs are embedded in `Link` URLs:
+Steam App IDs are read by two helpers in `VrModTagService` — `TryGetSteamAppIdFromLink`
+(`source/VrModTagService.cs:919`) and `TryGetSteamAppIdFromProviderId` (`:948`) — and the library
+side collects them per game in `GetGameSteamAppIds`. What they accept:
 
-```csharp
-// URL format: https://store.steampowered.com/app/{appid}/
-// Example: https://store.steampowered.com/app/1091500/ → AppID = 1091500
+- A store link, `TryGetSteamAppIdFromLink`: an absolute http(s) URL on a `steampowered.com` host
+  whose **path** has an `app` segment followed by digits. The store's own slug, a tracking parameter,
+  a fragment, an `agecheck` hop, a missing `store.`, a scheme-less link, a trailing slash and leading
+  zeros are all noise that gets ignored (`/app/434120/Resident_Evil_4` → `434120`).
+  `https://store.steampowered.com/steamvr`, `/appreviewzone/12345/`, a search URL whose query
+  contains `app/12345`, a `steamcommunity.com/linkfilter/?u=…` wrapper, a `steam://` protocol link and
+  a host like `notsteampowered.com` are read as **no App ID** — locked by the negative test cases in
+  `tests/Unit/VrModSteamAppIdTests.cs`
+- Playnite's `Game.GameId` (`TryGetSteamAppIdFromProviderId`), and only for a game whose `PluginId`
+  is the Steam library integration's
 
-// Extract from game links:
-var steamAppId = game.Links?
-    .FirstOrDefault(l => l.Url?.Contains("store.steampowered.com/app/") == true)?
-    .Url?
-    .Split('/')
-    .FirstOrDefault(part => long.TryParse(part, out _) && long.Parse(part) > 0);
-```
+Canonical form both directions: digits only, no longer than a real App ID, leading zeros stripped,
+`0` rejected (`TryCanonicalizeAppId`, `VrModTagService.cs:955`). The per-game list is
+`ComputeGameSteamAppIds` (`:977`): store links first, then the provider id, deduped in first-seen
+order. Source-side ids pass the same shape gate (`VrModEntry.NormalizeSteamAppId`); a value that
+cannot be an App ID is dropped rather than matched on.
 
-In a typical library a substantial share of games carry no Steam link, so those fall
-through to name-based matching. The Steam App ID path is the fast, definitive one;
-name matching (exact / substring / Levenshtein) covers the rest.
+In a typical library a substantial share of games carry no Steam link at all, and most catalog
+entries carry no App ID. Silence on either side is never read as a disagreement — that is what keeps
+name matching working for them. The pairing rules themselves are in
+[architecture.md](architecture.md#matching-algorithm).
 
 ## Tag Model
 
@@ -139,19 +147,30 @@ game.TagIds?.Remove(tag.Id);
 
 ### Steam App ID Match (Preferred)
 
-1. External source provides a Steam App ID (e.g., from RototRobot rendered HTML, UeVR Profiles API)
-2. Iterate through Playnite game `Links` collection for `store.steampowered.com/app/{id}/` URLs
-3. Compare extracted App IDs — exact match is definitive
+1. Five sources publish a Steam App ID per listing: Flat2VR, PCVR Central, RototRobot, Steam
+   Curator (`SteamCuratorParser.cs:166` reads a curator recommendation's `AppId`, so a review is
+   keyed to a product and not to review prose), and UeVR Profiles
+2. The library side collects each game's ids from its `Links` (`store.steampowered.com/app/{id}/`)
+   and, for a Steam-integrated game, its `GameId`
+3. Compare the ids: `SteamIdsMatch` (`source/VrModTagService.cs:1044`) pairs a listing with a
+   game; `SteamIdsConflict` (`:1053`) refuses a pairing when both sides carry ids and none agree
 
 ```csharp
-// In VrModTagService:
-private Game FindGameBySteamId(string steamAppId)
+// In VrModTagService: the candidate walk. Each caller runs it once per listing -
+// FindSuggestedGames (:1276), RunFullScanAsync (:1473), BuildReviewMatchesFromCache (:1714),
+// ReconcileSourceLinksForSource (:3870) - against the indexes BuildGameIndex froze at the
+// start of the scan, so a decision taken in this scan's review dialog lands next scan.
+internal List<Game> FindGamesByIndex(VrModEntry entry)          // :1087
 {
-    if (string.IsNullOrEmpty(steamAppId)) return null;
-    
-    return api.Database.Games.FirstOrDefault(g =>
-        g.Links?.Any(l => l.Url?.Contains("store.steampowered.com/app/") == true &&
-                          l.Url.Split('/').Contains(steamAppId)) == true);
+    // 1. A mapping somebody already decided (_decidedListingGames, keyed by every listing key
+    //    this entry could have) - a confirmed pair survives a rename on the site.        :1097
+    // 2. Every game that claims this entry's Steam App ID, from the App ID index.        :1113
+    // 3. Every game sharing the entry's exact normalized name - unless SteamIdsConflict
+    //    says the two are different products, in which case the pair is refused and the
+    //    refusal is logged.                                                              :1126-1138
+    // 4. No exact name: the best-scoring 3-character-bucket neighbour (GetMatchScore,
+    //    VrModNameMatcher.cs:299), then every game sharing THAT name - same conflict gate.
+    //                                                                                    :1141-1186
 }
 ```
 
@@ -159,40 +178,83 @@ private Game FindGameBySteamId(string steamAppId)
 
 When Steam ID matching fails (no Steam link on game, or no Steam ID on source entry):
 
-1. **Normalize both names** — `StripVrSuffixes()` → lowercase → replace `-`, `_`, `.` with spaces
-2. **Exact match** — compare normalized strings directly
-3. **Substring match** — one contains the other (confidence: 0.95)
-4. **Levenshtein similarity** — threshold 0.8, uncertain range 0.8-0.95 triggers confirmation prompt
+1. **Normalize both names** — `StripVrSuffixes` → lowercase → `-` and `_` to spaces → `.` removed,
+   in `VrModNameMatcher.Normalize` (`source/VrModNameMatcher.cs:145`). The service's hot path uses
+   `VrModTagService.NormalizeForMatchFast` (`source/VrModTagService.cs:829`), the same rules in one
+   allocation-light pass, held equal to the canonical one by the differential test
+   `NormalizeForMatchFast_MatchesCanonicalNormalize` (`tests/Unit/VrModNameMatcherTests.cs:476`)
+2. **Exact match** — the exact normalized-name lookup (`VrModTagService.cs:1126-1138`): every
+   game sharing the name, unless the App IDs conflict
+3. **Levenshtein similarity** — `VrModNameMatcher.ComputeSimilarity` (`VrModNameMatcher.cs:184`),
+   returned
+   only at or above `FuzzyMatchThreshold` (default 0.8, validated 0.5-1.0)
+4. **A plain substring is never a match** on its own — see the Containment rule in
+   [architecture.md](architecture.md#matching-algorithm)
+
+Score is not permission: anything that reaches the review list stays **Pending** until the user
+decides, and only an exact normalized-name match may write tags without one.
 
 ```csharp
-// Name normalization (from BaseVrModParser)
-protected string NormalizeName(string name)
+// Name normalization — VrModNameMatcher.cs:145
+public static string Normalize(string name)
 {
-    name = StripVrSuffixes(name);
-    return name.ToLowerInvariant()
+    var normalized = StripVrSuffixes(name);
+    return normalized.ToLowerInvariant()
         .Replace("-", " ")
         .Replace("_", " ")
         .Replace(".", "")
         .Trim();
 }
 
-// VR suffix stripping
-protected string StripVrSuffixes(string name)
+// VR suffix stripping — VrModNameMatcher.cs:62
+public static string StripVrSuffixes(string name)
 {
-    var result = name.Trim();
+    var result = name?.Trim() ?? string.Empty;
+
+    // Parenthetical suffixes, longest-first, mutually exclusive.
+    var strippedParen = false;
+    if (result.EndsWith(" (VR Port)", StringComparison.OrdinalIgnoreCase))
+    {
+        result = result.Substring(0, result.Length - 10).Trim();
+        strippedParen = true;
+    }
+    else if (!strippedParen && result.EndsWith(" (VR Mod)", StringComparison.OrdinalIgnoreCase))
+    {
+        result = result.Substring(0, result.Length - 9).Trim();
+        strippedParen = true;
+    }
+    else if (!strippedParen && result.EndsWith(" (VR)", StringComparison.OrdinalIgnoreCase))
+    {
+        result = result.Substring(0, result.Length - 5).Trim();
+        strippedParen = true;
+    }
+    else if (!strippedParen && result.EndsWith(" (UEVR)", StringComparison.OrdinalIgnoreCase))
+    {
+        result = result.Substring(0, result.Length - 7).Trim();
+        strippedParen = true;
+    }
+
+    // "Game Name VR Mod by Author" (RototRobot naming) → "Game Name"
+    var vrModByIdx = result.LastIndexOf(" VR Mod by", StringComparison.OrdinalIgnoreCase);
+    if (vrModByIdx >= 0)
+    {
+        result = result.Substring(0, vrModByIdx).Trim();
+    }
+    else
+    {
+        var byIdx = result.LastIndexOf(" by ", StringComparison.OrdinalIgnoreCase);
+        if (byIdx < 0 && result.EndsWith(" by", StringComparison.OrdinalIgnoreCase))
+            byIdx = result.Length - 3;
+        if (byIdx > 0)
+            result = result.Substring(0, byIdx).Trim();
+    }
+
     if (result.EndsWith(" VR", StringComparison.OrdinalIgnoreCase))
         result = result.Substring(0, result.Length - 3).Trim();
+
     if (result.EndsWith(" Flat2VR", StringComparison.OrdinalIgnoreCase))
         result = result.Substring(0, result.Length - 8).Trim();
-    if (result.EndsWith(" VR Mod by ", StringComparison.OrdinalIgnoreCase))
-        result = result.Substring(0, result.Length - 11).Trim();
-    if (result.EndsWith(" VR by ", StringComparison.OrdinalIgnoreCase))
-        result = result.Substring(0, result.Length - 7).Trim();
-    
-    var byIndex = result.LastIndexOf(" by ", StringComparison.OrdinalIgnoreCase);
-    if (byIndex > 0 && byIndex < result.Length - 4)
-        result = result.Substring(0, byIndex).Trim();
-    
+
     return result;
 }
 ```
@@ -200,20 +262,22 @@ protected string StripVrSuffixes(string name)
 ## Complete Matching Pipeline
 
 ```
-For each VrModEntry from external source:
-1. If entry.SteamAppId is populated:
-   a. Search Playnite games for matching Steam link (store.steampowered.com/app/{id}/)
-   b. If found → exact match, apply tags
-   c. If not found → fall through to name matching
+For each game-to-source mapping, ScanGameCore asks FindGamesByIndex (see
+architecture.md#matching-algorithm) and then gates what may happen:
 
-2. Name matching:
-   a. Normalize both names (StripVrSuffixes → lowercase → replace -/_/.)
-   b. Exact match → apply tags (confidence: 1.0)
-   c. Substring match (one contains other) → apply tags (confidence: 0.95)
-   d. Levenshtein similarity >= 0.8 → apply tags if Accepted; Pending → review dialog; Rejected → skip
-   e. No match → skip game
+1. Candidate selection: exact normalized name, or a shared Steam App ID, or a Levenshtein score
+   at/above FuzzyMatchThreshold. A candidate whose App IDs conflict with the entry's is dropped
+   at this stage, never scored.
+2. A saved decision on that entry+game key is honoured with no review row: Accepted re-applies its
+   tags, Rejected skips the game.
+3. Score >= threshold with NO saved decision -> Pending review row. Tags are untouched until the
+   user decides.
+4. Tags are written automatically only on the Saved branch, and only when the name score is 1.00
+   (exact normalized names). An App-ID-only pairing scores 1.00 for worth and still waits Pending.
+5. Exact normalized names with no App ID on either side are treated as Steam's own naming for a
+   Mod, and link to the Mod's own page instead of a guessed App ID.
 
-3. Track matched game IDs for stale tag detection
+Which games matched is still tracked for stale-tag detection (`RemoveStaleTags`).
 ```
 
 ## What This Plugin Writes to the Database

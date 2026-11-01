@@ -141,9 +141,12 @@ namespace PlayniteVRMods.Tests.Unit
 
         /// <summary>
         /// The row-collection rule the no-rescan path shares with a full scan: accepted and
-        /// rejected mappings always become rows; a pending mapping becomes a row only at or
-        /// above the threshold (an exact 1.00 match as Accepted, anything else as Pending);
-        /// below the threshold a pending mapping produces no row.
+        /// rejected mappings always become rows; a pending mapping becomes a row only at or above
+        /// the threshold; below the threshold a pending mapping produces no row. The two scores are
+        /// separate arguments: <c>score</c> is what a pairing is worth (a shared Steam App ID makes
+        /// it 1.00), <c>autoAccept</c> is whether the plugin may act on it without a decision (the
+        /// names match exactly). A 1.00 that is 1.00 only because of an App ID is a row, shown as
+        /// Pending.
         /// </summary>
         [Test]
         public void ReviewRowStatus_Rules()
@@ -151,19 +154,24 @@ namespace PlayniteVRMods.Tests.Unit
             const float threshold = 0.8f;
 
             // Accepted / rejected mappings are always rows, regardless of score.
-            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Accepted, 0f, threshold),
+            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Accepted, 0f, false, threshold),
                 Is.EqualTo(MatchDecision.Accepted));
-            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Rejected, 0f, threshold),
+            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Rejected, 0f, false, threshold),
                 Is.EqualTo(MatchDecision.Rejected));
 
             // Pending: reviewable at or above the threshold...
-            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Pending, 0.9f, threshold),
+            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Pending, 0.9f, false, threshold),
                 Is.EqualTo(MatchDecision.Pending));
-            // ...an exact match (1.00) as Accepted...
-            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Pending, 1.0f, threshold),
+            // ...a 1.00 the plugin is allowed to act on (the names match exactly) as Accepted...
+            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Pending, 1.0f, true, threshold),
                 Is.EqualTo(MatchDecision.Accepted));
+            // ...and a 1.00 that is 1.00 only because the two records publish the same Steam App ID
+            // stays Pending: the pairing is certain, the decision is not the plugin's to make.
+            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Pending, 1.0f, false, threshold),
+                Is.EqualTo(MatchDecision.Pending),
+                "an App ID match is offered for a decision, never reported as one already made");
             // ...and below the threshold no row at all.
-            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Pending, 0.5f, threshold), Is.Null);
+            Assert.That(VrModTagService.ReviewRowStatus(MatchDecision.Pending, 0.5f, false, threshold), Is.Null);
         }
 
         /// <summary>

@@ -155,8 +155,10 @@ indie and classic-game coverage + notes).
 
 Everything learned about the data PCVR Central carries **per mod** (the `mods[]` array inside
 the `/mods` catalog payload) and how it maps onto this plugin's tag vocabulary. The
-implementation is `source/Parsers/PcvrCentralParser.cs` (`MapFramework` / `MapQuality` /
-`MapMotion` / `MapStatus`, `ComputeFeatureUnions`); the source's position among all sources
+implementation is `source/Parsers/PcvrCentralParser.cs` (`MapFramework` `:484`, `MapQuality`
+`:519`, `MapMotion` `:542`, `MapStatus` `:575`); the union across one game's mods is the shared
+merge helper `MergeDuplicateGames` (`source/BaseVrModParser.cs:1036`, facets merged by
+`MergeFeaturesInto` `:1084`); the source's position among all sources
 is the ranking above.
 
 **Status: shipped.** Phase 1 (parse `mods[]` additively), Phase 2 (**meta-mod**: one entry per
@@ -312,11 +314,12 @@ and still adds no tag.
 
 ### Related fix found by the same investigation: RototRobot multi-category (done)
 
-RototRobot's `MapTagsToCategory` used to pick the **first** matching tag per mod (`motion` >
+RototRobot's tag mapping used to pick the **first** matching tag per mod (`motion` >
 `uevr` > gesture > 3dof > tool/emulator), so a mod tagged `1st motion uevr` got
 `Category = Full Motion Controls` and the **`UEVR` framework was dropped**. Live data: 20 games
 carried `uevr`, 16 of them also carried `motion`, so 16 lost the framework - a union-all
-violation. Fixed by the flat-tags model: `MapTagsToCategories` yields **every** matching
+violation. Fixed by the flat-tags model: `MapTagsToCategories`
+(`source/Parsers/RototRobotVrModParser.cs:307`) yields **every** matching
 category and `VrModEntry.Categories` carries them, so that mod now yields both
 `Full Motion Controls` **and** `UEVR`. See "RototRobot multi-category fix" in
 [architecture.md](architecture.md).

@@ -66,7 +66,7 @@ to clean up):
 - **Umbrella** `VRMod` — always added to every matched game.
 - **Category** `VRMod {category}` — e.g. `VRMod UEVR`, `VRMod Flat2VR Port`,
   `VRMod REFramework`. One per known category on the entry, except **catalog** categories
-  (`IsCatalogCategory`, `VrModCategories.cs:199-203`: PCVR Central, PCVR Mods Hub,
+  (`IsCatalogCategory`, `VrModCategories.cs:257`: PCVR Central, PCVR Mods Hub,
   Mr Survivor, CompoundVR), which contribute no category tag of their own — only the
   umbrella (see "Cross-source overlap" below). An enriched catalog source can still emit
   *framework* categories alongside its catalog category: PCVR Central's per-game `mods` array
@@ -78,21 +78,21 @@ to clean up):
   (`Native-like`, `Excellent`, `Playable`, `Experimental`), per known **motion level**
   (`Full Motion`, `Partial Motion`, `Gamepad Only`, `No Motion`) and per known **mod status**
   (`Active`, `Update Detected`, `Outdated`, `Broken`, `Abandoned`) — `TagNameForQuality` /
-  `TagNameForMotion` / `TagNameForStatus`, applied by `VrModCategories.TagNamesFor`
-  (`VrModCategories.cs:259-297`).
+   `TagNameForStatus`, applied by `VrModCategories.TagNamesFor`
+   (`VrModCategories.cs:317`; `TagNamesFor(VrModEntry)` overload at `:362`).
 
 **One vocabulary, checked in one place.** `VrModCategories.KnownTagValues`
-(`VrModCategories.cs:102-114`) is the list of every value the plugin may turn into a
+(`VrModCategories.cs:160`) is the list of every value the plugin may turn into a
 `VRMod {value}` tag: the category constants (frameworks, the four catalogs, Full Motion
 Controls, Motion Gesture, Head-Tracked), the four quality grades, the four motion levels, the
 five mod statuses, and the three fixed facet values. Tag names are built
 by concatenating a value that a website wrote onto the umbrella prefix, so the check exists to
 stop a parser forwarding raw page text (a mod title, an HTML fragment, a 200-character
 description) from becoming a tag in the user's library (`IsValidTagName`,
-`VrModCategories.cs:153-166`). An off-vocabulary value is **dropped and reported**:
-`DropUnknownFeatureValues` collects them with `UnknownTagValues`
-(`VrModCategories.cs:131-144`), removes them from the entry, logs the dropped values, and puts
-the same line in that source's run log (`VrModTagService.cs:300-325`) — so a site renaming its
+  `VrModCategories.cs:211`). An off-vocabulary value is **dropped and reported**:
+  `DropUnknownFeatureValues` (`VrModTagService.cs:364`) collects them with `UnknownTagValues`
+  (`VrModCategories.cs:189`), removes them from the entry, logs the dropped values, and puts
+  the same line in that source's run log (`VrModTagService.cs:364-385`) — so a site renaming its
 categories shows up in the log instead of looking like games quietly losing category tags. See
 also **Source category allow-lists** below.
 
@@ -117,16 +117,16 @@ majority status (`Active`, on 1,527 of PCVR Central's 1,548 mods) is kept rather
 game with **no** status tag then means "no source says anything about this mod", which is a
 different fact from "a source says it works". Which mod each status belongs to is not recoverable
 from the tag list; it is kept in `VrModEntry.AdditionalInfo`, where PCVR Central writes a per-mod
-feature summary (`source/Parsers/PcvrCentralParser.cs:594-685`).
+feature summary (`PcvrCentralParser.cs:220` fills `AdditionalInfo` from `BuildModFeaturesInfo`, declared at `:660`).
 
 Within one **entry** the categories are a **set** (`VrModEntry.Categories`): a single mod
 can yield several categories (e.g. a RototRobot mod that is both a UEVR profile *and* a
 full-motion rig yields `VRMod UEVR` *and* `VRMod Full Motion Controls`). `Category` remains
 a legacy single-value alias (writing it appends to `Categories`); `Categories` is the source
 of truth. The same applies to the graded facets: `Qualities`, `Motions` and `Statuses` are collections and
-`Quality` / `Motion` (`VrModEntry.cs:167`, `:186`) are their legacy single-value aliases, so
+`Quality` / `Motion` (`VrModEntry.cs:231`, `:250`) are their legacy single-value aliases, so
 one entry can carry several grades and several motion levels. `Is6DOF` / `IsFirstPerson` /
-`IsThirdPerson` (`:121`, `:129`, `:137`) stay one-valued per entry — they are yes/no answers, and both
+`IsThirdPerson` (`:171`, `:179`, `:187`) stay one-valued per entry — they are yes/no answers, and both
 yes and no add a tag. This is the **flat tags** model: a mod is a *set of tags* with no
 first-match-wins category collapse (see the RototRobot fix below).
 
@@ -134,9 +134,8 @@ first-match-wins category collapse (see the RototRobot fix below).
 
 | Scan | Method | Trigger | Result surface |
 | --- | --- | --- | --- |
-| **Full scan** | `VrModTagService.RunFullScanAsync` | Scan timer; Playnite startup (`ScanOnStartupAsync` — first install, expired cache, or cache disabled); the **Full Scan** and **Review VR Mods** buttons, which live on the plugin's own settings page — Playnite shows that page under **Add-ons →
-   Extensions settings** for this plugin; the plugin defines no Playnite `CommandDefinition`s | Timer → a Playnite **notification**. **Full Scan** → tags applied (no dialog). **Review VR Mods** → the **review dialog** built from the source cache (no scan); only a cold cache falls back to a full scan with `reviewAll: true`. |
-| **New-game scan** | `VrModTagService.ScanGamesAsync` (batch; `ScanGameAsync` is the one-game case) | Two paths: `OnLibraryUpdated` → `NotifyLibraryUpdated` (diff against the known-game baseline), **and** the service's own `Database.Games.ItemCollectionChanged` / `ItemUpdated` subscriptions (`VrModTagService.cs:1648-1649`) — the latter is what catches a manually added game, which never raises `OnLibraryUpdated`. Batches are debounced 5 s (`DefaultNewGameDebounceMs`); more than `MaxPerGameScanBatch = 20` games in one batch runs **one full library scan** instead of a per-game scan. | Pending matches are **auto-applied** (tags written now, no dialog) — a game appearing in the library is not a moment to interrupt the user. The decision stays **Pending** (defined below). |
+| **Full scan** | `VrModTagService.RunFullScanAsync` | Scan timer; Playnite startup (`OnApplicationStarted` runs a full library scan at every start, `VrModTagPlugin.cs:202`); the **Full Scan** and **Review VR Mods** buttons, which live on the plugin's own settings page — Playnite shows that page under **Add-ons → Extensions settings** for this plugin; the plugin defines no Playnite `CommandDefinition`s | Timer → a Playnite **notification**. **Full Scan** → tags applied (no dialog). **Review VR Mods** → the **review dialog** built from the source cache (no scan); only a cold cache falls back to a full scan with `reviewAll: true`. |
+| **New-game scan** | `VrModTagService.ScanGamesAsync` (batch; `ScanGameAsync` is the one-game case) | Two paths: `OnLibraryUpdated` → `NotifyLibraryUpdated` (diff against the known-game baseline), **and** the service's own `Database.Games.ItemCollectionChanged` / `ItemUpdated` subscriptions (`VrModTagService.cs:2375-2376`) — the latter is what catches a manually added game, which never raises `OnLibraryUpdated`. Batches are debounced 5 s (`DefaultNewGameDebounceMs`); more than `MaxPerGameScanBatch = 20` games in one batch runs **one full library scan** instead of a per-game scan. | Pending matches are **auto-applied** (tags written now, no dialog) — a game appearing in the library is not a moment to interrupt the user. The decision stays **Pending** (defined below). |
 
 > **"Auto-applied", precisely (single-game scan):** the match's **tags** are written to
 > the game immediately — so the tags are visible without a dialog — but the match's
@@ -191,7 +190,7 @@ opening a window.
 
 > **The auto-scan notification.** The timer scan posts one Playnite
 > notification — per-source failures and stale-removal skips, otherwise the number of
-> pending matches (`BuildScanNotificationMessage`; the dialog title names it a scheduled
+  > pending matches (`BuildAutoScanMessage`, `VrModTagPlugin.cs:648`; the dialog title names it a scheduled
 > scan) — and clicking it opens the **review dialog** for that scan's pending matches.
 > When the scan produced no pending matches the click target is `null`: the notification
 > is informational and opens nothing. There is no "no news → settings view" target in
@@ -298,15 +297,34 @@ sequenceDiagram
 
 `VrModNameMatcher` is a static utility shared by the service and every parser; it only scores
 name pairs. The
-tiers themselves are the service's lookup, `FindGamesByIndex` (`VrModTagService.cs:720-782`),
+tiers themselves are the service's lookup, `FindGamesByIndex` (`VrModTagService.cs:1087`),
 and **a plain substring is never a match** (this is what eliminates the sequel false positives
 — `hl` must not match "Half-Life 2"):
 
-1. **Steam App ID** — `_steamCache` maps an App ID to a game, built from each Playnite game's
-   `Links` that start with `https://store.steampowered.com/app/` (`VrModTagService.cs:578-588`);
-   an entry carrying the same `SteamAppId` gets that game added directly (`:725-729`). A perfect
-   hit with no name involved. An entry whose App ID the library has no link for is **not** stuck:
-   name matching still runs below it.
+1. **Steam App ID** — the pairing rule that does not need names at all. Both sides publish ids:
+   Each source that publishes one has its own way of knowing it, and **no source verifies an id by
+   fetching the Steam product page** — nothing in the plugin does that: **PCVR Central** reads the
+   `steamAppId` field of its own catalog JSON (`PcvrCentralParser.ReadSteamAppId`: a positive integer
+   counts, `"$undefined"`, a zero, a negative and any other text do not); **Steam Curator** reads the
+   `data-ds-appid` attribute of each curator item and builds the listing's store URL from it;
+   **Flat2Vr** and **RototRobot** read it out of the Steam store link on the listing card;
+   **UeVR Profiles** reads the `appID` field of its Firestore record. CompoundVR, VorpX, LukeRoss,
+   ReFramework and the two hubs (`MrNlceHub`, `MrSurvivorHub`) publish none. On the library side an id comes from the game's
+   `Links` to `https://store.steampowered.com/app/…` (`TryGetSteamAppIdFromLink`) **and**, when the
+   game came from the Steam library plugin, from `Game.GameId` (`TryGetSteamAppIdFromProviderId`).
+   Every id, scraped or read, passes the same validity rules before it may pair anything
+   (`VrModEntry.NormalizeSteamAppId` on assignment; `SteamAppIdForMatch` exposes only a canonical,
+   all-digit, length-bounded one). The per-scan map is `_gameSteamAppIds`, built by `BuildGameIndex`
+   (`:623`) from `ComputeGameSteamAppIds`. Matching, ranking,
+   suggestions, tag computation and the game-driven scan all read the same primitives —
+   `VrModEntry.SteamAppIdForMatch` (the only accessor matching is allowed to use),
+   `GetGameSteamAppIds`, `SteamIdsMatch`, `SteamIdsConflict`.
+   A shared id pairs them even when the names share nothing. **Conflicting** ids (both sides
+   publish one, none shared) refuse a pairing the names would have made — and the refused pairing
+   is still shown as a suggestion, flagged, ranked last. Silence is never a refusal: a listing
+   with no id (the name-only sources) or a game with no Steam link matches exactly as before.
+   An entry whose App ID the library has no link for is **not** stuck: name matching still runs
+   below it.
 2. **Exact normalized name** — normalized source name equals normalized game name → every game
    sharing it, i.e. store duplicates, and the lookup stops there (`:736-741`). Two normalizers
    are in play: `VrModNameMatcher.Normalize` (strip VR suffixes, lowercase, `-`/`_` → space,
@@ -314,10 +332,10 @@ and **a plain substring is never a match** (this is what eliminates the sequel f
    everything but letters/digits/spaces, collapses runs); the differential test locks them to the
    same result.
 3. **Length-bounded Levenshtein** — only when no exact name hit: the best-scoring normalized
-   name among the candidates sharing its 3-character bucket prefix (`HashBucketChars`,
-   `:746-753`), and every game sharing *that* name (`:774-779`). Score = `1 - dist/maxLen`,
-   returned only if ≥ the caller-supplied `threshold` (`FuzzyMatchThreshold`, default `0.75f`,
-   validated to 0.50–1.00).
+   name among the candidates sharing its 3-character bucket prefix (`HashBucketChars = 3`,
+   `VrModTagService.cs:70`; the bucket walk is `:1144-1150`), and every game sharing *that*
+   name (`:1172-1179`). Score = `1 - dist/maxLen`, returned only if >= the caller-supplied
+   `threshold` (`FuzzyMatchThreshold`, default `0.80f`, validated to 0.50-1.00).
 
 `GetMatchScore(sourceName, gameName, threshold)` (`VrModNameMatcher.cs:299`) returns the best
 score of a pair, or `-1` for no match. `Normalize` / `StripVrSuffixes` clean names;
@@ -325,15 +343,29 @@ score of a pair, or `-1` for no match. `Normalize` / `StripVrSuffixes` clean nam
 
 The **other direction** — which cached entries could match a given game, which is what the
 review dialog and the reconciliation passes ask — does not scan names at all. It queries the
-catalog index (`GetCachedEntriesForGame`, `VrModTagService.cs:2938-2965`), whose prunes are
-derivations of the matcher's own: a length window derived from the threshold (`:2946-2949`) and
-a letter-overlap upper bound (`:2957`), each with a one-character margin so float rounding
+catalog index (`GetCachedEntriesForGame`, `VrModTagService.cs:3772`), whose prunes are
+derivations of the matcher's own: a length window derived from the threshold and a letter-overlap
+upper bound (`:3791`), each with a one-character margin so float rounding
 never decides a match, then `CanReachSimilarity` (`1 − |Δlength|/maxLen` must reach the
 threshold, `VrModNameMatcher.cs:358-365`).
 
-The legitimate fuzzy matches (anything below a perfect 1.0) are *expected*, but they are
-never auto-accepted: `score >= 1.0f` is what makes a match Accepted (`VrModTagService.cs:931`,
-`:1114`, `:1429`); everything else is a **Pending** row for the user to confirm.
+The legitimate fuzzy matches (anything below a perfect 1.0) are *expected*, but they are never
+auto-accepted. What decides is **two different scores for one pairing**, because a shared App ID
+makes the pairing score 1.00 without making it a decision:
+
+- `MatchScoreFor(entry, game)` — what the pairing is **worth**: 1.00 when the App IDs agree,
+  otherwise the name score. Used for the threshold gate, for ranking, and for the score column.
+- `NameScoreFor(entry, game)` — the name score alone, i.e. whether the plugin may **act** without
+  asking. Only an exact name match (1.00 from the names) licenses an automatic Accept.
+
+So `MatchDecision.Accepted` without a user requires an exact name match (`ReviewRowStatus(decision,
+score, autoAccept, threshold)`, and the same test at each decision site in the full scan, the
+game-driven scan and the review-from-cache path). A pairing that is 1.00 **only** because the two
+records publish the same Steam App ID is certain about the product and undecided as a mod: it is a
+**Pending** row, in the review pass and in the plain scan pass alike — the scan pass no longer
+applies its tags, records it in `_lastSuggestions` with the reason "shared Steam App ID", and keeps
+the game out of stale-tag removal until somebody decides. Everything the name rules accept on their
+own behaves as before.
 
 One source entry can match several `Game` rows: a title imported from several stores
 yields several rows with an identical name. `FindGamesByIndex` returns all of them
@@ -355,13 +387,15 @@ Rather than widen the tiers, this is a **second lookup with its own verdict and 
 whose output is never applied:
 
 1. **`VrModTokenRun` / `CompareTokenRuns(sourceName, gameName)`** (`VrModTokenRun.cs`,
-   `VrModNameMatcher.cs`) classifies a normalized pair as `Unrelated` / `SameProduct` /
-   `NeedsALook` / `DifferentProduct`. A *run* is the maximal leading stretch of *word tokens* that occurs in both
-   names (`VrModWordToken` — a token keeps its letters, digits, apostrophes and hyphens, and
-   carries `Ordinal`/`NumericOrRoman` and the packaging words `Complete Edition`, `Definitive
-   Edition`, `Goty`, `Game of the Year`, `Deluxe`, `Director's Cut`, `Unlocked`, `Uncut`, `Legends`,
-   `Legend`, `Trilogy`, `Remastered`, `Edition`; a trademark glyph folds into the token, so
-   `3™` is one token). Rules, in order:
+   `VrModNameMatcher.cs:602`) classifies a normalized pair as `Unrelated` / `SameProduct` /
+   `NeedsALook` / `DifferentProduct`. A *run* is the maximal leading stretch of word tokens
+   that occurs in both names. Tokens are plain normalized strings from `TokenizeForMatch`
+   (`:564`) — letters, digits, apostrophes and hyphens survive, so a trademark glyph stays
+   inside one token (`3™` is a single token). A token counts as an identifier when
+   `ParseRomanNumeral` (`:446`, values 1 to `MaxRomanNumeralValue` = 20 at `:367`) or
+   `IsIdentifierToken` (`:585`) accepts it. A side's leftovers are judged by
+   `PackagingWords` (`:545`) or an ordinal whose value the other name carries too (the
+   leftover test is `LeftoversAreAgreedWording`, `:723`, through `IdentifierValueOf`, `:749`).
    - no shared run → `Unrelated`;
    - **carry filter** — after dropping packaging tokens, every leftover on a side must be
      contained in the *other* side's run: a listing whose leftover words are not in the game name
@@ -420,15 +454,16 @@ becomes a match.
 ## Decisions & persistence
 
 - **Key**: `VrModEntry.MakeDecisionKey(sourceId, gameId)` → `VrModNameMatcher.MakeDecisionKey`
-  → `"{sourceId}||{identity}||{gameId:D}"` (`VrModEntry.cs:402-403`,
+  → `"{sourceId}||{identity}||{gameId:D}"` (`VrModEntry.cs:479-480`,
   `VrModNameMatcher.cs:495-499`). In the service every read, write and clear of a mapping goes
-  through one funnel, `EntryDecisionKey` (`VrModTagService.cs:1118-1126`). The middle component
+  through one funnel, `EntryDecisionKey` (`VrModTagService.cs:1789`). The middle component
   is the listing's **identity** (`VrModEntry.DecisionKeyComponent`, computed at
-  `VrModEntry.cs:405-420`): `steam:<App ID>`, else `url:<host><path>`, else the name. So a
+  `VrModEntry.cs:442`, documented at `:409-441`): `steam:<App ID>`, else `url:<host><path>`,
+  else the name. So a
   listing that keeps its App ID or its page URL keeps its decision across a site rename, and a
   name-shaped key only happens when the source names listings; the listing's display name is
   what the review surface shows, never the key. Because the key is identity, a rename does not
-  resurrect an answered question: `TryRekeyDecision` (`VrModTagSettings.cs:640-690`) moves the
+   resurrect an answered question: `TryRekeyDecision` (`VrModTagSettings.cs:709-759`) moves the
   decision, its timestamp and its tag baseline to the new key on the scan that first sees the
   listing, and legacy name-shaped keys are migrated once (`RemoveLegacyNameKeyedDecisions`,
   `:796`). Identity changes the **key**, not how a listing is **found**: an App-ID listing still
@@ -439,21 +474,24 @@ becomes a match.
   still one yes/no ("is this source's game the same as this Playnite game?"), so a single
   decision covers all its categories. A user can still reject a title for one source and
   accept it for another with no cross-source interference.
-- **Stored** in `config.json` as **three flat maps**, never a per-key object: `v1.Decisions`
-  (key → status string), `v1.SourceTagBaselines` (key → the tags that decision applied,
-  comma-joined), `v1.FirstSeenUtc` (key → ISO-8601 stamp). All three are replaced
-  copy-on-write on every change (`SetDecisionByKey`/`ClearDecisionByKey`,
-  `VrModTagSettings.cs:577-639`) so a walker never sees a half-written map.
+- **Stored** in `config.json` as **three flat maps of strings**, never a per-key object:
+  `MatchDecisions` (key → decision status string), `SourceTagsByDecision` (key → the
+  newline-joined tag names that decision recorded; only an **Accepted** decision carries this
+  baseline), and `DecisionTimestamps` (key → ISO 8601 UTC stamp). All three are published
+  copy-on-write on every change (`SetDecisionByKey` `VrModTagSettings.cs:577`,
+  `ClearDecisionByKey` `:612`) so a walker never sees a half-written map; code that enumerates
+  decisions while a scan may write takes `SnapshotMatchDecisions` (`:484`).
 - **The stamp** is created on first record of the pair (`EnsureDecisionTimestampUtc`,
-  `:868`) and feeds the dialog's `Saved at` column. Every decision write **overwrites** it
-  with the write time (`:580-588`), so for a decided pair it is the last decision time, not
+  `VrModTagSettings.cs:988`) and feeds the dialog's `Saved at` column. Every decision write
+  **overwrites** it with the write time (`SetDecisionByKey`, `VrModTagSettings.cs:577-605`,
+  stamp written at `:586`), so for a decided pair it is the last decision time, not
   the discovery time. There is no 5-minute first-seen rule anywhere in the code.
 - **Tag presence** ⟺ an Accepted decision, **or** a Pending match a scan auto-applied
   (new-game scan, or any scan with no review callback — see "Auto-applied, precisely"
   above). An Accepted decision adds the umbrella + category (+ facet) tags; reverting to
   Pending clears the decision and removes the tags; Rejected removes the tags and clears
   the decision. Scans never write a Pending decision — the only decision writes in the
-  codebase are the review dialog's Save (`VrModReviewDialog.xaml.cs:714-743`).
+  codebase are the review dialog's Save (`VrModReviewDialog.xaml.cs:448`).
 - **What does NOT persist:** the review dialog's in-memory `Status` edits are only
   persisted when the user clicks **Save** in the dialog. A pending auto-apply (no review
   callback) applies tags but stores no decision, so the match re-appears next scan until
@@ -700,48 +738,48 @@ have caused bugs before.
   try/catch so one failure can't cancel the others. Crucially, **stale-tag removal is
   skipped if ANY enabled source failed** — otherwise a transient fetch failure would look
   like "every game from that source is now unmatched" and delete real tags. `failedSources`
-  is incremented only on a fetch exception and on a cancellation
-  (`VrModTagService.cs:435-452`), and `RunFullScanAsync` then skips stale-tag removal,
-  feature reconciliation and source-link reconciliation for the whole run (`:973-983`, links
-  at `:1013`). A **disabled** source is not fetched and is not counted. A source that returns
-  **zero entries** is a success and gates nothing: its empty listing is cached like any other
-  (`:280`) and it is surfaced as the `No data` health state in the settings grid and the
-  last-run dialog (see **Per-source status**). What protects a whole-site outage is that a
-  failed source never writes to `_sourceCache` — only a completed fetch does (`:251-280`), so
-  the listing from the last good run is still there for the next scan. (`RefreshCache`,
-  `:471-483`, is the opposite lever: an explicit user action that drops cached listings,
-  per source or all of them.)
+  is incremented only on a fetch exception and on a cancellation (`VrModTagService.cs:505`,
+  `:513`, in `FetchAllEnabledSourcesAsync`), and `RunFullScanAsync` then skips stale-tag
+  removal, feature reconciliation and source-link reconciliation for the whole run
+  (`:1615-1625`, links at `:1660`). A **disabled** source is not fetched and is not counted.
+  A source that returns **zero entries** is a success and gates nothing: its empty listing is
+  cached like any other (`:344`) and it is surfaced as the `No data` health state in the
+  settings grid and the last-run dialog (see **Per-source status**). What protects a whole-site
+  outage is that a failed source never writes to `_sourceCache` — only a completed fetch does
+  (`GetEntriesAsync`, `:312-348`), so the listing from the last good run is still there for the
+  next scan. (`RefreshCache` `:536` and `ClearSourceCache` `:543` are the opposite lever: an
+  explicit user action that drops cached listings, all of them or per source.)
 - **Scans never run concurrently.** Every tag-mutating scan path (startup, the timer,
   the **Full Scan** button, the review-from-cache cold-start fallback, and the
   single-game scan on game install) goes through one `TryBeginScan` lease
-  (`VrModTagService.cs:179-187`) in `VrModTagService`: an `Interlocked.Exchange` flag
+  (`VrModTagService.cs:243`) in `VrModTagService`: an `Interlocked.Exchange` flag
   (`_scanInFlight`) and a disposable lease — deliberately **no monitor**, because a held
   monitor would block a second caller and a second caller must return immediately. A
   coinciding trigger is *skipped* (logged as "a scan is already in progress; skipping this
   one") — it is not queued and not run in parallel — because `_settings.SourceStatuses` is a
   plain non-concurrent `Dictionary` and interleaved tag add/remove across two scans would
   flap tags. Work is not lost: new games detected while the gate is held stay queued and are
-  drained when the lease is released (`ReleaseScanGate`, `:189-196`). The read-only
+  drained when the lease is released (`ReleaseScanGate`, `:253`). The read-only
   `BuildReviewMatchesFromCache` (the **Review VR Mods** button on a warm cache) is
   deliberately NOT gated, so that dialog always opens without waiting on a scan.
 - **A decision key is a listing identity, not a name.** `MakeDecisionKey(sourceId,
   listingIdentity, gameId)` embeds the listing's App ID, else its page URL, and only a name
-  when the source names listings (`GetEntryIdentifierComponent`,
-  `VrModTagService.cs:1120-1133`) plus the Playnite game's stable Id. So a source renaming a
-  listing does **not** resurrect an answered question: `TryRekeyDecision`
-  (`VrModTagSettings.cs:640-697`) moves the decision, its timestamp and its tag baseline to
+  when the source names listings (`DecisionKeyComponent`, `VrModEntry.cs:442`, funnelled through
+  `EntryDecisionKey`, `VrModTagService.cs:1789`) plus the Playnite game's stable Id. So a source
+  renaming a listing does **not** resurrect an answered question: `TryRekeyDecision`
+  (`VrModTagSettings.cs:709-759`) moves the decision, its timestamp and its tag baseline to
   the new key on the scan that first sees the listing. A source that only names listings
   keeps a name-shaped key **on purpose** — with no identity to key on, a rename *is* a new
   question and the match re-appears as Pending. Renaming a Playnite game does NOT invalidate
   decisions (the Id is stable), and neither does importing the same title from several
   stores: a store duplicate is several Game rows with distinct Ids, and each carries its own
   decision (the review grid shows `Name (Store)` — and only for a name shared by more than
-  one game, `GetGameDisplayName`, `VrModTagService.cs:637-646`).
+  one game, `GetGameDisplayName`, `VrModTagService.cs:806`).
 - **The review dialog is row-level, not cell-level.** `DataGridCell.ColumnIndex` does
   not exist in this WPF version, so double-click handling is on the `DataGrid` (row).
   Rows are **one per mapping** — (source, listing identity, game Id) — and **category is in
   no key anywhere**: an entry with three categories is one row and one decision
-  (`MakeReviewMatch`, `VrModTagService.cs:1183-1191`). Store duplicates (same name, different
+  (`MakeReviewMatch`, `VrModTagService.cs:1866`). Store duplicates (same name, different
   Id) stay separate rows. `Status` is the single source of truth;
   `PersistedDecision`/`SavedAtUtc` are set once at construction.
 - **The settings ViewModel is not in its own file.** `VrModSettingsViewModel` lives in
@@ -763,7 +801,7 @@ have caused bugs before.
 - **Theming is `DynamicResource`, with two deliberate exceptions.** Every themeable visual
   property in the settings view and the review dialog resolves from the active Playnite
   theme, so the UI follows the user's theme automatically. Two places hardcode colour
-  on purpose: `MatchDecisionToBrushConverter` (`VrModReviewDialog.xaml.cs:1953-1973`) paints
+  on purpose: `MatchDecisionToBrushConverter` (`VrModReviewDialog.xaml.cs:1973`) paints
   **Accepted green / Rejected orange-red / Pending grey** from `Colors.*`, because the three
   decision states have to stay distinguishable in any theme; and `ErrorToBrushConverter`
   (`ErrorToBrushConverter.cs:46-65`) resolves the source-status dots from theme keys
@@ -857,7 +895,7 @@ from websites the plugin does not control.
 - **`HttpHostGate`**: a FIFO per-host semaphore plus the global cap, so one site never gets
   hammered and one slow site cannot starve the rest. A host's requests are spaced by the
   `Crawl-delay` that host asked for, capped at 30 s (`MaxCrawlDelay`, `HttpHostGate.cs:63`,
-  applied by `SetCrawlDelay` `:160`); a cancelled waiter releases the global slot it already took
+  applied by `SetCrawlDelay` `:180`); a cancelled waiter releases the global slot it already took
   (`:127-155`), which is what keeps a scan cancellation from leaking capacity.
 - **`RobotsPolicy`**: one robots.txt per host per process, read with a **64 KB** cap
   (`MaxRobotsBytes`, `RobotsPolicy.cs:46`). `Crawl-delay` is honoured; **`Disallow` is
@@ -1048,7 +1086,7 @@ dialog-save and toggle paths persist immediately).
 ```csharp
 public class VrModTagSettings
 {
-    public float FuzzyMatchThreshold { get; set; } = 0.75f;      // validated 0.50–1.00
+    public float FuzzyMatchThreshold { get; set; } = 0.8f;       // validated 0.50–1.00
     public int ScanIntervalMinutes { get; set; } = 1440;         // 24 h
     public int CacheDurationMinutes { get; set; } = 360;         // 6 h
     public bool AreSourceLinksEnabled { get; set; } = true;
@@ -1233,15 +1271,15 @@ Shown by Playnite under **Settings → Add-ons → VRMod Tags**: a `ScrollViewer
   knob is hidden in `config.json` either — what is not on the page is **code, not a setting**: the
   scan's wall-clock budget (`ScanWallClockBudget`, default 10 minutes, `VrModTagService.cs:61`),
   the per-host politeness pause, the new-game debounce and batch size (`DefaultNewGameDebounceMs`,
-  `MaxPerGameScanBatch = 20`, `:173`), and the Playnite notification an automatic scan leaves
+  `MaxPerGameScanBatch = 20`, `:237`), and the Playnite notification an automatic scan leaves
   behind (`ShowAutoScanNotification`, `VrModTagPlugin.cs:548`).
 - **Per-source status.** `SourceStatuses` is a `Dictionary<string, SourceStatus>` keyed by the
-  lowercased source Id (`VrModTagService.cs:494`, `:505-508`); `SourceStatus`
-  (`VrModTagSettings.cs:909-987`) carries `LastScanTime`, `LastResult`, `LastEntryCount`,
+  lowercased source Id (`VrModTagSettings.cs:362`, used at `VrModTagService.cs:556-573`);
+  `SourceStatus` (`VrModTagSettings.cs:1029`) carries `LastScanTime`, `LastResult`, `LastEntryCount`,
   `LastError`, `LastChangeId`, `LastTagCount` / `LastTagCountApplied`, `LastLinkCount` /
   `LastLinkCountApplied`, `LastRunLog`. The whole record is `[DontSerialize]`: it lives in memory
   only, so "Never scanned" after a Playnite restart does not mean the source was never scanned.
-  `VrModSourceRowViewModel` (`VrModSourceRowViewModel.cs:201-240`) renders it as two strings:
+  `VrModSourceRowViewModel` (`VrModSourceRowViewModel.cs:54`; the strings it exposes are `:201-240`) renders it as two strings:
   `StatusText` — `Never scanned` / `Error: {message}` / `No data: last scan {time} returned 0
   entries` / `Last scan: {time}` — used as the cell tooltip and as the input to the dot's
   colour; and `StatusShort` — `Never scanned` / `Error` / `No data` / the local last-scan time
@@ -1338,7 +1376,7 @@ Icon: icon.png
   `ServicePointManager.SecurityProtocol`); 200-char game-name cap; 200-char Levenshtein cap (returns 0.0
   beyond); 500 ms politeness delay between network sources; scan interval max 525600 min (365 days, 0 = never,
   though the shipped presets stop at 30 days); cache duration max 43200 min (30 days); fuzzy threshold
-  default 0.75f, validated 0.50–1.00.
+   default 0.8f, validated 0.50–1.00.
 - **Network shape** (all three exist purely because the URLs come from sites the plugin does not
   control): at most 4 HTTP requests in flight overall and 1 per host (`HttpHostGate.Shared`,
   `HttpHostGate.cs:66`; the limits are `:50` and `:56`), a host's requests spaced by that host's
@@ -1360,9 +1398,9 @@ Icon: icon.png
   and only run when no enabled source failed — a source that returns zero entries is a success
   (see the data-loss gate under *Unusual things to know*).
 - A category/quality/motion value that is not in `VrModCategories.KnownTagValues`
-  (`VrModCategories.cs:74-85`) never becomes a tag: it is dropped from the entry and reported in
-  the source's run log (`UnknownTagValues`, `:102-113`). Tag names are additionally length- and
-  character-checked (`IsValidTagName`, `:122-144`) because they embed text a website wrote.
+  (`VrModCategories.cs:160`) never becomes a tag: it is dropped from the entry and reported in
+  the source's run log (`UnknownTagValues`, `:189`). Tag names are additionally length- and
+  character-checked (`IsValidTagName`, `:211`) because they embed text a website wrote.
 - Removing a `VRMod*` tag manually from a game clears the associated decision.
 - Pending matches auto-apply when there is no review callback (single-game scan): their tags are written now, but the decision stays **Pending** (not accepted) and no source link is added, so the match reappears as Pending in the next full-scan review.
 - No indeterminate decision state — `Status` is exactly Pending/Accepted/Rejected;
@@ -1416,7 +1454,7 @@ tests/
 ├── TestHelpers/
 │   ├── DecisionKeyShim.cs
 │   └── FakeItemCollection.cs
-├── Unit/          # 54 files: 624 [Test] methods + 426 [TestCase] cases
+├── Unit/          # 58 files: 693 [Test] methods + 480 [TestCase] cases + 1 [Range] family
 │   ├── ...        #   service, settings, settings-VM + view, provider, matcher, registry, entry,
 │   │              #   categories, help, WebUrl, converters, auto-scan messages/notifications,
 │   │              #   review-dialog suites (apply, dedupe, filter, reset, empty state, columns
@@ -1431,7 +1469,7 @@ tests/
 │                  #   ScannedTagVocabularyTests, CatchVocabularyTests,
 │                  #   PcvrCentralParseResilienceTests, VrModThreadingContractTests,
 │                  #   VrModUiHopGuardTests
-├── Parsers/       # 18 files, 188 tests: one per parser + fixture snapshots + UeVR page-token
+├── Parsers/       # 12 files, 197 tests: one per parser + fixture snapshots + UeVR page-token
 └── Integration/
     └── IntegrationTests.cs        # 47 tests against Playnite's real types
 ```

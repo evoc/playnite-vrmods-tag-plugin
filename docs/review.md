@@ -19,7 +19,7 @@ The review dialog is where you decide which suggested matches are right. You ope
 | **Source** | Which source the match came from. |
 | **Source Entry** | The entry in that source's listing. |
 | **Game** | The game in your library the entry matched. When the same title is in your library more than once (for example imported from Steam and from Epic), each import is its own row, shown with its store name in brackets. |
-| **Score** | Match confidence — 1.00 is an exact match (exact matches are accepted by default). |
+| **Score** | Match confidence — 1.00 means the plugin is certain about the pairing: either the two names match exactly (accepted by default), or the listing and the game publish the same Steam App ID (shown as **Pending** for you to decide — see "Matches by Steam App ID"). |
 | **Saved at** | When the current decision was saved. Hidden by default — enable it via the **Columns…** menu. |
 | **Tags** | The tags the game gets when you accept: the `VRMod` umbrella tag plus the category tags. Italic with an "↑" marker when the source's tags changed since you last accepted. |
 | **Changed** | Flagged when the source's tags changed since your last acceptance (for example, 6DOF support added to the listing later). Tick **Changed only** to filter to just those rows. |
@@ -46,6 +46,25 @@ wrong game.
   is not dragged in.
 - Suggestions are never applied by a scan, and they are never counted as matches. Accept one and
   the tags appear at the next save.
+
+## Matches by Steam App ID
+
+Some listings say which Steam product they are for, and some library games do too: a Steam import
+carries its product id, a listing from Steam Curators or PCVR Central carries one, and both sides of
+a pairing can therefore point at the same Steam App ID even when their names share nothing — a
+listing called *Trageous Hallows* and a library game called *Outlast 2*, both publishing 2521050.
+Those pairings are real matches and they arrive as **Pending** rows at score 1.00: the App ID proves
+which product the listing is for, not that you want this mod on it. Nothing is tagged until you
+Accept the row, and a pending row keeps a game's existing tags from being cleaned up as stale while
+you decide.
+
+A listing and a game that publish **different** Steam App IDs are not matched, even when their names
+are identical — *Resident Evil 4* (434120) and the library's *Resident Evil 4* (2443190) are two
+products. If the names argue for the pairing it still shows up as a **Suggested** row, flagged with
+the disagreement and ranked last, so you can settle it yourself.
+
+A side that says nothing is not a refusal. Listings from sources that publish no App ID at all, and
+library games with no Steam link, match by name exactly as they always did.
 
 ## Making decisions
 
