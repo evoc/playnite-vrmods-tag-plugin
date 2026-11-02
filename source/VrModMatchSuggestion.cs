@@ -47,8 +47,24 @@ namespace Playnite.VRMods
         /// </summary>
         public bool SteamIdsDisagree { get; }
 
+        /// <summary>
+        /// How many words the two names share as one unbroken run. Used only to order candidates:
+        /// when several words of the same rarity feed one candidate list, the pair whose shared run
+        /// covers more of both names is the stronger claim, and the whole-name similarity cannot say
+        /// that (a listing "Morrowind" inside "The Elder Scrolls III: Morrowind GOTY Edition" scores
+        /// 0.20 and is the certain pair).
+        /// </summary>
+        public int SharedTokenCount { get; }
+
+        /// <summary>
+        /// How many words sit outside that run on either side. Second ordering key: same shared run,
+        /// fewer leftover words is the tighter claim on the pair.
+        /// </summary>
+        public int LeftoverTokenCount { get; }
+
         internal VrModMatchSuggestion(Game game, string sourceGameName, string reason,
-            TokenRunKind kind, float displayScore, bool steamIdsDisagree = false)
+            TokenRunKind kind, float displayScore, bool steamIdsDisagree = false,
+            int sharedTokenCount = 0, int leftoverTokenCount = 0)
         {
             Game = game ?? throw new ArgumentNullException(nameof(game));
             SourceGameName = sourceGameName ?? string.Empty;
@@ -56,6 +72,8 @@ namespace Playnite.VRMods
             Kind = kind;
             DisplayScore = displayScore;
             SteamIdsDisagree = steamIdsDisagree;
+            SharedTokenCount = sharedTokenCount;
+            LeftoverTokenCount = leftoverTokenCount;
         }
     }
 }

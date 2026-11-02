@@ -39,6 +39,12 @@ against *Age of Wonders 4*) or disagree about an edition word, the pair is refus
 the review grid at all — those rows would be noise, and a wrong Accept there would write tags for the
 wrong game.
 
+When several library games could fit one listing, at most two rows are shown, and they are the pairs
+whose names explain each other most: the longest unbroken run of shared words, with the fewest words
+left over on either side. The **Score** number is not that ranking — *Morrowind* against *The Elder
+Scrolls III: Morrowind GOTY Edition* scores 0.20 and is the strongest of those two facts, which is why
+the number is shown as information rather than used to decide what you are offered.
+
 - Hover the **Status** cell to read the reason: which words of the listing name the game name
   contains, which words of the game name are left over, and whether a number disagrees.
 - Accepting the row records the pairing by name. Every later scan then matches that listing to

@@ -25,6 +25,14 @@ namespace Playnite.VRMods
     public static class VrModNameMatcher
     {
         /// <summary>
+        /// How many decorations <see cref="StripVrSuffixes"/> will take off one name. Each pass removes
+        /// one, and a name stacks a bracket, an author tail and a VR phrase at most before its title is
+        /// exposed ("X VR Mod by a by b by c" is not a listing this plugin should keep cutting).
+        /// A bound, not a guess: the loop stops early as soon as a pass takes nothing.
+        /// </summary>
+        private const int MaxStripPasses = 4;
+
+        /// <summary>
         /// Strips VR-related suffixes and author credits from a game name.
         ///
         /// This is the first step in the matching pipeline. External sources often include
@@ -32,13 +40,15 @@ namespace Playnite.VRMods
         /// clean game names. This method removes those suffixes in a specific order
         /// (most specific first) to handle compound patterns correctly.
         ///
-        /// Strip order (each step only runs if the previous parenthetical step didn't match):
+        /// Strip order, one decoration per pass, repeated until the end of the name stops changing
+        /// (see <see cref="MaxStripPasses"/>; each pass takes the most specific decoration it can
+        /// find at the end):
         /// 1. "(VR Port)" - 10 chars, for Flat2VR-style VR port labels
         /// 2. "(VR Mod)" - 9 chars, for explicitly labeled VR mods
         /// 3. "(UEVR)" - 7 chars, for UEVR profile listings
         /// 4. "(VR)" - 5 chars, generic VR suffix in parentheses
-        /// 5. " VR Mod by" - RototRobot convention: "DOOM VR Mod by Author" → "DOOM"
-        /// 6. " by " - General author credit removal: "DOOM by Author" → "DOOM"
+        /// 5. " VR Mod" / " UEVR Mod" - a VR phrase at the end, any case: "DOOM VR Mod", "Freespace 2 VR mod"
+        /// 6. " by " - General author credit removal, last occurrence: "DOOM by Author" → "DOOM"
         /// 7. " VR" - Trailing VR suffix: "DOOM VR" → "DOOM"
         /// 8. " Flat2VR" - Trailing Flat2VR suffix: "DOOM Flat2VR" → "DOOM"
         ///
@@ -48,11 +58,14 @@ namespace Playnite.VRMods
         ///   "Half-Life 2 (VR)" → "Half-Life 2"
         ///   "Fallout 4 (VR Port)" → "Fallout 4"
         ///   "Resident Evil 7 Flat2VR" → "Resident Evil 7"
+        ///   "Half-Life 2 (VR Mod) by Team Beef" → "Half-Life 2"   (author tail first, then the bracket)
         ///
         /// Edge cases handled:
         /// - Null input returns empty string
         /// - Multiple " by " occurrences: uses the LAST one (AuthorName at end)
-        /// - Chained suffixes: parentheticals are mutually exclusive (only first match wins)
+        /// - Chained suffixes: each pass takes one, so a bracket hiding behind an author tail still comes off
+        /// - "Mod" only peels when a VR word precedes it: "Garry's Mod" and "Final Mod" name a product,
+        ///   they do not label one as a mod
         ///
         /// IMPORTANT: This method is called on BOTH source entries AND Playnite game names
         /// before comparison, ensuring both are cleaned to the same baseline.
@@ -63,57 +76,60 @@ namespace Playnite.VRMods
         {
             var result = name?.Trim() ?? string.Empty;
 
-            // Strip parenthetical suffixes (mutually exclusive - only the first match is applied)
-            // These are checked longest-first to avoid partial matches (e.g., "(VR Port)" before "(VR)")
-            var strippedParen = false;
-            if (result.EndsWith(" (VR Port)", StringComparison.OrdinalIgnoreCase))
+            // One decoration per pass, repeated until nothing more comes off. The decorations do not
+            // arrive in the order they are stacked: "X (VR Mod) by Author" only shows its bracket once
+            // the author tail is gone, and so does "X VR Mod by Author". A single linear pass is what
+            // left a name like "Freespace 2 VR mod" carrying its own label.
+            for (var pass = 0; pass < MaxStripPasses && result.Length > 0; pass++)
             {
-                result = result.Substring(0, result.Length - 10).Trim();
-                strippedParen = true;
+                var before = result;
+                result = StripTrailingDecoration(result);
+                if (result == before)
+                    break;
             }
-            else if (!strippedParen && result.EndsWith(" (VR Mod)", StringComparison.OrdinalIgnoreCase))
-            {
-                result = result.Substring(0, result.Length - 9).Trim();
-                strippedParen = true;
-            }
-            else if (!strippedParen && result.EndsWith(" (VR)", StringComparison.OrdinalIgnoreCase))
-            {
-                result = result.Substring(0, result.Length - 5).Trim();
-                strippedParen = true;
-            }
-            else if (!strippedParen && result.EndsWith(" (UEVR)", StringComparison.OrdinalIgnoreCase))
-            {
-                result = result.Substring(0, result.Length - 7).Trim();
-                strippedParen = true;
-            }
-
-            // Strip " VR Mod by Author" (RototRobot VR mod naming convention)
-            // Uses LastIndexOf to find the rightmost occurrence, handling cases like
-            // "Game Name VR Mod by Author Name" → "Game Name"
-            var vrModByIdx = result.LastIndexOf(" VR Mod by", StringComparison.OrdinalIgnoreCase);
-            if (vrModByIdx >= 0)
-            {
-                result = result.Substring(0, vrModByIdx).Trim();
-            }
-            else
-            {
-                // Strip " by AuthorName" suffix (general pattern for other sources)
-                // Also handles "Game by" at end of string (no space after "by")
-                var byIdx = result.LastIndexOf(" by ", StringComparison.OrdinalIgnoreCase);
-                if (byIdx < 0 && result.EndsWith(" by", StringComparison.OrdinalIgnoreCase))
-                    byIdx = result.Length - 3;
-                if (byIdx > 0)
-                    result = result.Substring(0, byIdx).Trim();
-            }
-
-            // Strip trailing VR suffixes (generic " VR" and source-specific " Flat2VR")
-            if (result.EndsWith(" VR", StringComparison.OrdinalIgnoreCase))
-                result = result.Substring(0, result.Length - 3).Trim();
-
-            if (result.EndsWith(" Flat2VR", StringComparison.OrdinalIgnoreCase))
-                result = result.Substring(0, result.Length - 8).Trim();
 
             return result;
+        }
+
+        /// <summary>
+        /// Take the most specific decoration sitting at the END of the name, or return the name
+        /// unchanged when its last words are not a decoration this plugin knows.
+        /// </summary>
+        private static string StripTrailingDecoration(string name)
+        {
+            // Parenthetical VR labels, longest-first so "(VR Port)" is never read as "(VR)".
+            if (name.EndsWith(" (VR Port)", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - 10).Trim();
+            if (name.EndsWith(" (VR Mod)", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - 9).Trim();
+            if (name.EndsWith(" (UEVR)", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - 7).Trim();
+            if (name.EndsWith(" (VR)", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - 5).Trim();
+
+            // A VR phrase at the end of the name, in any case. The leading space is the whole rule:
+            // "Flat2VR mod" has no space before "VR", so its "mod" belongs to the source's own naming
+            // and is left where the source put it.
+            if (name.EndsWith(" VR Mod", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - 7).Trim();
+            if (name.EndsWith(" UEVR Mod", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - 9).Trim();
+
+            // Author tail: the LAST " by ", because "Author Name" is the tail and a title may carry
+            // its own " by " earlier ("Dead by Daylight by Someone" — the last one is the authorship).
+            var byIdx = name.LastIndexOf(" by ", StringComparison.OrdinalIgnoreCase);
+            if (byIdx < 0 && name.EndsWith(" by", StringComparison.OrdinalIgnoreCase))
+                byIdx = name.Length - 3;
+            if (byIdx > 0)
+                return name.Substring(0, byIdx).Trim();
+
+            // Trailing VR words: generic " VR", then the source-specific " Flat2VR".
+            if (name.EndsWith(" VR", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - 3).Trim();
+            if (name.EndsWith(" Flat2VR", StringComparison.OrdinalIgnoreCase))
+                return name.Substring(0, name.Length - 8).Trim();
+
+            return name;
         }
 
         /// <summary>
@@ -549,6 +565,134 @@ namespace Playnite.VRMods
             "enhanced", "definitive", "directorial", "directiorals", "anniversary",
             "holiday", "bfg", "deluxe", "premium", "standard", "trilogy", "legendary"
         };
+
+        // ---------------------------------------------------------------------------------------
+        // Edition wording at the END of a MATCHING KEY.
+        //
+        // A re-release is the same product written at a longer name, and the string tiers cannot see
+        // that: "bioshock infinite" against "bioshock infinite complete edition" is refused by the
+        // substring rule (one name is a proper substring of the other - the rule that exists so "doom"
+        // never matches "DOOM Eternal"), and Levenshtein on the two is 0.60. Their whole advantage here
+        // is mechanical: they compare normalized word sets, so the extra words have to be words and not
+        // a score.
+        //
+        // Copied as a WORD-level strip - these words taken out of every name wherever they sit - the
+        // rule reaches names it must not touch: "of", "the", "game" and "year" are inside real titles
+        // ("Brothers - A Tale of Two Sons", "Call of Juarez: Gunslinger", "Life Is Strange: Before The
+        // Storm", "The Talos Principle"). So this is a TAIL rule instead: only a run of re-release
+        // wording sitting at the very end of the name comes off, and only when that run contains a word
+        // that can only mean a re-release.
+        //
+        // MEASURED, four modes of one build over the same corpus - 2 520 real library names against 695
+        // real catalog headings (PlayniteVRmods-dev/tools/NormAb; NORMAB_NOSTRIP=1, default,
+        // NORMAB_WORDSTRIP=1, NORMAB_BOTH=1):
+        //   the rule off                                     135 pairs
+        //   THIS rule: tail peeled on the library side as an extra key   144  (+9, nothing lost)
+        //   word-level strip, words taken out wherever they sit          142  (+7, and 4 of these 9 lost)
+        //   the same tail peeled from BOTH sides as the only key         145
+        //
+        // The 9 pairs this rule adds are all re-releases of a product the library already named:
+        //   'Deus Ex VR' -> 'Deus Ex: Game of the Year Edition'      (also Fallout 3 VR, Batman: Arkham
+        //   Asylum VR, The Witcher 3: Wild Hunt VR)
+        //   'BioShock Infinite VR' -> 'BioShock Infinite Complete Edition' AND '…: Complete Edition'
+        //   'Tomb Raider by Team Beef Studios' -> 'Tomb Raider GAME OF THE YEAR EDITION' and 'Tomb
+        //   Raider: Game of the Year Edition'   (two copies of the same purchase in one library)
+        //
+        // What the other shapes add on top is what this rule refuses. Peeled from the listing side as
+        // well: 'Thief Gold VR' -> 'Thief' - the listing stops saying which edition it is about. With the
+        // words pulled out wherever they sit: also 'Outer Wilds VR' -> 'The Outer Worlds' at 0,818 by
+        // Levenshtein - two different products, one word apart, and stripping "the" is what closed the
+        // gap. A word is not decoration just because it is a small word.
+        // ---------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// Words that can only mean "this is a re-release of the thing before it". A tail has to contain
+        /// at least one of them before anything comes off, which is what stops a name whose tail is just
+        /// small words ('Life Is Strange: Before The Storm') from being cut at all.
+        /// </summary>
+        private static readonly HashSet<string> EditionTailWords = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "edition", "editions", "goty", "complete", "gold", "vanilla", "directorial"
+        };
+
+        /// <summary>
+        /// Words that may sit INSIDE an edition tail ("game of the year edition") but never start one and
+        /// never come off on their own.
+        /// </summary>
+        private static readonly HashSet<string> EditionTailFillers = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "the", "of", "game", "year"
+        };
+
+        /// <summary>
+        /// Take a re-release tail off a name that is ALREADY a matching key - lowercase, separators
+        /// collapsed, VR decorations already peeled.
+        ///
+        /// This runs on the LIBRARY side of a comparison only - the keys built from the user's own game
+        /// names (`VrModTagService.BuildGameIndex`, `:628`) - and not on the listing side, for two
+        /// measured reasons. (1) The wording lives in libraries: 163 of 2 520 real library names contain
+        /// one of these words somewhere and 150 of them end with a peelable tail, against 6 of 695 real
+        /// catalog headings, 5 of them a tail (PlayniteVRmods-dev/tools/NormAb). (2)
+        /// Taking it off the listing side costs matches: the listing "DOOM 3 BFG Edition" against the
+        /// library's misspelled "DOOM 3 BFG Editon" is one edit apart (similarity 0.944), but once the
+        /// listing loses "Edition" it is 0.588 - and it cannot fall back on the substring rule either,
+        /// because "doom 3 bfg" is a proper substring of the longer name and that rule exists so "doom"
+        /// never matches "DOOM Eternal". The words a listing wrote are what its comparison tolerates.
+        ///
+        /// It is not the token-run tier's rule either: that tier keeps every word and names the leftovers
+        /// for the reviewer ("the game name adds 'goty edition'") rather than silently discarding them.
+        /// </summary>
+        /// <param name="normalizedKey">A library-side key produced by <see cref="Normalize"/> or by the
+        /// service's <c>NormalizeForMatchFast</c>.</param>
+        /// <returns>The key without its edition tail; unchanged when it has none, when its tail is only
+        /// small words, or when the whole key would be removed (a name that IS the words: "Complete
+        /// Edition").</returns>
+        public static string StripEditionTail(string normalizedKey)
+        {
+            if (string.IsNullOrEmpty(normalizedKey))
+                return normalizedKey ?? string.Empty;
+
+            var tokens = normalizedKey.Split(' ');
+            var last = tokens.Length - 1;
+            while (last >= 0 && tokens[last].Length == 0)
+                last--;
+
+            var strong = 0;
+            var i = last;
+            while (i >= 0)
+            {
+                if (EditionTailWords.Contains(tokens[i]))
+                {
+                    strong++;
+                    i--;
+                    continue;
+                }
+                if (strong > 0 && EditionTailFillers.Contains(tokens[i]))
+                {
+                    i--;
+                    continue;
+                }
+                break;
+            }
+
+            // No re-release word at the end, or the whole name is one ("Game of the Year Edition").
+            if (strong == 0 || i < 0)
+                return normalizedKey;
+
+            var kept = new string[i + 1];
+            Array.Copy(tokens, kept, i + 1);
+            var result = string.Join(" ", kept).Trim();
+            if (result.Length == 0)
+                return normalizedKey;
+
+            // The tail was hung on the title with a colon ("BioShock Infinite: Complete Edition"). Once
+            // the tail is gone the colon is a dangling separator, not part of the title - and a key that
+            // ends in ':' matches nothing, because listings write "BioShock Infinite VR", not a colon.
+            if (result[result.Length - 1] == ':')
+                result = result.Substring(0, result.Length - 1).Trim();
+
+            return result;
+        }
 
         /// <summary>
         /// A normalized name split into the words a name rule can reason about.

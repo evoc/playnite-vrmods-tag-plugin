@@ -398,8 +398,12 @@ namespace PlayniteVRMods.Tests.Unit
             //               argue for it and nothing refuses it, so it is the recommendation.
             //   'conflicts' - the same name on a different Steam product: the ids refuse it, so it is
             //               still shown (a person can settle it) but flagged and ranked last.
+            //
+            // 'Deluxe Edition' rather than 'Gold': the re-release rule (VrModNameMatcher.StripEditionTail)
+            // reads 'Gold' as the same product written longer, and this pairing has to stay one the App ID
+            // found and the names did not, because that is what the test is about.
             var conflicts = AddGame("Resident Evil 4", "https://store.steampowered.com/app/2443190/Resident_Evil_4");
-            var agrees = AddGame("Resident Evil 4 Gold", "https://store.steampowered.com/app/434120/Resident_Evil_4_Gold");
+            var agrees = AddGame("Resident Evil 4 Deluxe Edition", "https://store.steampowered.com/app/434120/Resident_Evil_4_Deluxe_Edition");
             var silent = AddGame("Resident Evil 4 Deluxe");
             var listing = new VrModEntry { GameName = "Resident Evil 4", SteamAppId = "434120", Category = "UEVR" };
             var service = NewService(new VrModTagSettings(), new StubParser(SourceId, listing));

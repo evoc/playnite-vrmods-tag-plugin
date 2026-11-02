@@ -338,23 +338,113 @@ namespace PlayniteVRMods.Tests.Unit
         /// The review queue is where a human decides, so its size and order are design decisions: at
         /// most <see cref="VrModTagService.SuggestionRowsPerEntry"/> rows per listing, the tier the
         /// rules are closest to certain about first.
+        ///
+        /// The Gold row is gone from this fixture on purpose. 'Redout Space Legend Gold' differs from the
+        /// listing by re-release wording alone, and that is now asserted rather than asked about — the
+        /// same change that took 'Tomb Raider: Game of the Year Edition' out of the queue. What stays is
+        /// what a person still has to read: wording the rules agree is packaging but cannot assert is the
+        /// same product ('Deluxe Edition' is its own store entry), and a word the listing has never heard
+        /// ('Eternity').
         /// </summary>
         [Test]
         public void FindSuggestedGames_CapsTheRowsAndPutsTheCertainTierFirst()
         {
-            AddGame("Redout Space Legend");
-            AddGame("Redout Space Legend Gold");
+            var plain = AddGame("Redout Space Legend");
+            var gold = AddGame("Redout Space Legend Gold");
+            AddGame("Redout Space Legend Deluxe Edition");
             AddGame("Redout Space Legend Eternity");
             var parser = RegisterSource(new VrModEntry { GameName = "Redout Space Legend", Category = "UEVR" });
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
-            var suggestions = _service.FindSuggestedGames(FindEntry(parser, "Redout Space Legend"));
+            var entry = FindEntry(parser, "Redout Space Legend");
+            Assert.That(_service.FindGamesByIndex(entry).Select(g => g.Id),
+                Is.EquivalentTo(new[] { plain.Id, gold.Id }),
+                "a library copy whose only difference is re-release wording is matched, not queued");
+
+            var suggestions = _service.FindSuggestedGames(entry);
 
             Assert.That(suggestions, Has.Count.EqualTo(VrModTagService.SuggestionRowsPerEntry),
                 "a listing can name a family the library holds several entries of; the dialog must not become an inventory");
             Assert.That(suggestions[0].Kind, Is.EqualTo(TokenRunKind.SameProduct),
                 "re-release wording first: the tier a person can accept without reading");
-            Assert.That(suggestions[0].Game.Name, Is.EqualTo("Redout Space Legend Gold"));
+            Assert.That(suggestions[0].Game.Name, Is.EqualTo("Redout Space Legend Deluxe Edition"));
+        }
+
+        /// <summary>
+        /// The whole point of the re-release rule, at the level a person experiences it: the library holds
+        /// the same product under the names the stores sold it under, the catalog names it once, and every
+        /// copy the person owns gets tagged. 'Anniversary' is in this fixture because it looks like the
+        /// same kind of wording and is not — it names the 2007 remake of the 1996 game, so it stays out.
+        /// </summary>
+        [Test]
+        public void FindGamesByIndex_ReachesEveryStoreCopyOfAProductNamedByAReReleaseTail()
+        {
+            var plain = AddGame("Tomb Raider");
+            var goty = AddGame("Tomb Raider: Game of the Year Edition");
+            var gotyShouted = AddGame("Tomb Raider GAME OF THE YEAR EDITION");
+            var remake = AddGame("Tomb Raider: Anniversary");
+            var parser = RegisterSource(new VrModEntry { GameName = "Tomb Raider", Category = "UEVR" });
+
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            var entry = FindEntry(parser, "Tomb Raider");
+            var matched = _service.FindGamesByIndex(entry).Select(g => g.Id).ToList();
+            Assert.That(matched, Is.EquivalentTo(new[] { plain.Id, goty.Id, gotyShouted.Id }),
+                "re-release wording is the only difference between these three library records");
+            Assert.That(matched, Does.Not.Contain(remake.Id),
+                "'Anniversary' is not re-release wording; it names a different product");
+            foreach (var id in matched)
+                Assert.That(_games.Items.Single(g => g.Id == id).TagIds, Is.Not.Empty,
+                    $"{id} is a copy of the product the listing names, so it gets the mod's tags");
+
+            // The remake stays a question. The rules refuse it as a match and the review dialog is where
+            // somebody says whether they want the mod on it - which is the other half of this rule: it
+            // asserts the copies whose only difference is re-release wording, and leaves everything else
+            // to be read.
+            var suggestions = _service.FindSuggestedGames(entry);
+            Assert.That(suggestions, Has.Count.EqualTo(1));
+            Assert.That(suggestions[0].Game.Id, Is.EqualTo(remake.Id));
+        }
+
+        /// <summary>
+        /// Why the re-release key is an EXTRA key on library names and never a rewrite of either side: the
+        /// words a name wrote are what its comparison tolerates. 'Edition' is what puts this catalog name
+        /// one edit from the library's misspelling (0.944); with it taken off, the same pair is 0.588 and
+        /// the substring tier refuses it as well, because 'doom 3 bfg' sits inside the longer name.
+        /// </summary>
+        [Test]
+        public void FindGamesByIndex_KeepsTheWordingTheListingItselfWrote()
+        {
+            var misspelled = AddGame("DOOM 3 BFG Editon");
+            var parser = RegisterSource(new VrModEntry { GameName = "DOOM 3 BFG Edition", Category = "UEVR" });
+
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            Assert.That(_service.FindGamesByIndex(FindEntry(parser, "DOOM 3 BFG Edition")).Select(g => g.Id),
+                Is.EquivalentTo(new[] { misspelled.Id }));
+        }
+
+        /// <summary>
+        /// The guard against the wider rule this library was offered: taking packaging words out of names
+        /// wherever they sit merges titles that merely share one. Every game here is a real library name
+        /// that such a rule matched to 'F.E.A.R. VR' — 'Layers of Fear' because the dots in F.E.A.R. leave
+        /// the key reading as the word 'fear', 'Dandara: Trials of Fear Edition' because 'Edition' is a
+        /// word it would drop.
+        /// </summary>
+        [Test]
+        public void FindGamesByIndex_DoesNotMergeTitlesThatMerelyShareAPackagingWord()
+        {
+            var fear = AddGame("F.E.A.R.");
+            AddGame("Layers of Fear");
+            AddGame("Dandara: Trials of Fear Edition");
+            AddGame("The Outer Wilds");
+            var parser = RegisterSource(new VrModEntry { GameName = "F.E.A.R. VR", Category = "UEVR" });
+
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            Assert.That(_service.FindGamesByIndex(FindEntry(parser, "F.E.A.R. VR")).Select(g => g.Id),
+                Is.EquivalentTo(new[] { fear.Id }),
+                "only the record that IS F.E.A.R. is matched");
         }
 
         /// <summary>
@@ -387,6 +477,112 @@ namespace PlayniteVRMods.Tests.Unit
 
             Assert.That(_service.FindSuggestedGames(FindEntry(parser, "Zebra Games Pack")), Is.Empty,
                 "the posting-list cap must refuse to search a third of the library");
+        }
+
+        /// <summary>
+        /// The rarest word is a guess about which word a listing names its product with, and it can be
+        /// wrong. A word that labels how a product was reached ('mod') posts to few games, so it wins a
+        /// rarest-first choice, while every game carrying it is some other product the token rules
+        /// refuse - and under a single pick the whole search ends there, with the listing offered nothing
+        /// even though the word that does name the product was sitting in the same listing name.
+        ///
+        /// This is the real library and the real catalog name behind it: three library copies of
+        /// 'Yooka-Laylee' and the RototRobot listing 'Yooka-Laylee Mod VookaRaylee by Eusth'. Posting
+        /// counts are a property of the whole library, which is what makes this fragile rather than
+        /// local: measured over 1 348 listing names against a 3 045-game library, a normalizer change to
+        /// ONE library name moved 'mod' from 6 postings to 5, 'mod' became rarer than 'yooka', and three
+        /// correct pairings vanished. So the listing's words are now tried rarest-first and the search
+        /// stops at the first group of equally rare words whose postings survive the token-run rules.
+        /// </summary>
+        [Test]
+        public void FindSuggestedGames_AWordWhoseGamesAreAllRefusedDoesNotEndTheSearch()
+        {
+            // 'mod' is the rarer word here (1 game carries it, 2 carry 'yooka') and its single game is a
+            // different product: 'Just Cause 2: Multiplayer Mod' shares one word with the listing and
+            // neither name's words are the whole of the other's run.
+            var first = AddGame("Yooka-Laylee");
+            var second = AddGame("Yooka-Laylee");
+            AddGame("Just Cause 2: Multiplayer Mod");
+            var parser = RegisterSource(new VrModEntry { GameName = "Yooka-Laylee Mod VookaRaylee by Eusth", Category = "UEVR" });
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            var entry = FindEntry(parser, "Yooka-Laylee Mod VookaRaylee by Eusth");
+            Assert.That(_service.FindGamesByIndex(entry), Is.Empty,
+                "0.42 of ten as whole strings: the name rules cannot assert this pair, which is why it is a review row");
+
+            var suggestions = _service.FindSuggestedGames(entry);
+            Assert.That(suggestions, Has.Count.EqualTo(VrModTagService.SuggestionRowsPerEntry),
+                "the rarer word that named nothing must not end the search");
+            Assert.That(suggestions.Select(s => s.Game.Id), Is.EquivalentTo(new[] { first.Id, second.Id }));
+            foreach (var suggestion in suggestions)
+            {
+                Assert.That(suggestion.Kind, Is.EqualTo(TokenRunKind.NeedsALook));
+                Assert.That(suggestion.Reason, Does.Contain("the listing adds 'mod vookaraylee'"),
+                    "the leftover wording is named, including the word that almost hijacked the search");
+            }
+        }
+
+        /// <summary>
+        /// Words of equal rarity are searched as one group. A posting count is a fact about the whole
+        /// library, so two words carried by the same number of games are equally good evidence about a
+        /// listing — and if the search stopped at the first of them, the order the listing happened to
+        /// write its words in would decide which rows a person is offered. Measured on the live catalog:
+        /// 44 of 1 348 listing names tie for their rarest library-present word; searching the group costs
+        /// 57 CompareTokenRuns calls out of 7 569 (+0.8%) and adds one candidate.
+        /// </summary>
+        [Test]
+        public void FindSuggestedGames_WordsOfEqualRarityAreAllSearchedBeforeTheSearchStops()
+        {
+            // Every word of the listing is carried by exactly one library game, so 'alpha', 'beta' and
+            // 'gamma' tie at one posting each. 'alpha' reaches "Alpha Beta" (the game's words are the
+            // first two of the listing's), and 'gamma' reaches "Gamma"; under a per-word stop the second
+            // pairing would never be looked at because the first word already named something.
+            var shorterGame = AddGame("Alpha Beta");
+            var oneWordGame = AddGame("Gamma");
+            var parser = RegisterSource(new VrModEntry { GameName = "Alpha Beta Gamma", Category = "UEVR" });
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            var entry = FindEntry(parser, "Alpha Beta Gamma");
+            Assert.That(_service.FindGamesByIndex(entry), Is.Empty,
+                "0.74 and 0.45 of a whole name: the name rules cannot assert either pairing");
+
+            var suggestions = _service.FindSuggestedGames(entry);
+            Assert.That(suggestions.Select(s => s.Game.Id), Is.EquivalentTo(new[] { shorterGame.Id, oneWordGame.Id }),
+                "the tied words are one search unit, not a race decided by listing word order");
+            Assert.That(suggestions[0].Game.Id, Is.EqualTo(shorterGame.Id),
+                "the pairing whose shared words cover more of both names is offered first");
+            Assert.That(suggestions[0].SharedTokenCount, Is.EqualTo(2));
+            Assert.That(suggestions[1].SharedTokenCount, Is.EqualTo(1));
+        }
+
+        /// <summary>
+        /// Candidates from one rarity group are ranked by what the pair says, not by the whole-name
+        /// similarity the review dialog displays. "Alpha Beta Gamma" against "Alpha Beta Gamma Delta
+        /// Epsilon Zeta" is 0.64 similar and against "Alpha Beta" is 0.74 — yet the first is where every
+        /// word of the listing sits inside one run, and the second leaves a title word unexplained. The
+        /// display score is the last key, for candidates the coverage facts leave level.
+        /// </summary>
+        [Test]
+        public void FindSuggestedGames_RanksByWhatTheSharedWordsExplainBeforeTheDisplayScore()
+        {
+            var extendedGame = AddGame("Alpha Beta Gamma Delta Epsilon Zeta");
+            var shorterGame = AddGame("Alpha Beta");
+            // Filler so all three of the listing's words tie at two postings and land in one group:
+            // 'gamma' would otherwise be rarer than 'alpha' and 'beta' and form a group of its own.
+            // "Gamma Something Else" shares one word with the listing and is refused by the carry rule.
+            AddGame("Gamma Something Else");
+            var parser = RegisterSource(new VrModEntry { GameName = "Alpha Beta Gamma", Category = "UEVR" });
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            var suggestions = _service.FindSuggestedGames(FindEntry(parser, "Alpha Beta Gamma"));
+            Assert.That(suggestions, Has.Count.EqualTo(VrModTagService.SuggestionRowsPerEntry));
+            Assert.That(suggestions[0].Game.Id, Is.EqualTo(extendedGame.Id),
+                "three shared words beat two, even though the whole-name score says the opposite");
+            Assert.That(suggestions[0].SharedTokenCount, Is.EqualTo(3));
+            Assert.That(suggestions[0].DisplayScore, Is.LessThan(suggestions[1].DisplayScore),
+                "the displayed score is not the ranking key, and the row says why in its Reason");
+            Assert.That(suggestions[0].Kind, Is.EqualTo(suggestions[1].Kind),
+                "the verdict kind is equal here, so coverage is what orders them");
         }
 
         /// <summary>

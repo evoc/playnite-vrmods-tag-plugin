@@ -17,8 +17,10 @@ own category tags, and a link to the mod page.
   individually toggleable, and the settings page shows each one's health and last result.
 - **Matched by Steam App ID as well as by name** — when a listing and a library game publish the
   same Steam product id they pair even if their names share nothing; when they publish different ids,
-  a pairing the names would have made is refused. A match resting on the App ID alone is a Pending
-  row for you to decide, never a tag applied on its own.
+  a pairing the names would have made is refused. A library game named *Game Complete Edition* is also
+  looked up as *Game*, because the re-release words at the end of a name say which copy it is, not
+  which product. A match resting on the App ID alone is a Pending row for you to decide, never a tag
+  applied on its own.
 - **A review dialog for the matches it is unsure about** — filter, sort, accept, reject, bulk
   actions, column control, open the mod page. Statuses are Saved/New (accepted), Rejected,
   Suggested and Pending.

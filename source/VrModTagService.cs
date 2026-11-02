@@ -70,11 +70,13 @@ namespace Playnite.VRMods
         private const int HashBucketChars = 3;
 
         /// <summary>
-        /// Candidate budget for one listing's suggestion search. The posting list of the listing's
-        /// rarest word is not walked when more games than this carry that word: a full scan runs over
+        /// Candidate budget for one listing's suggestion search. A word carried by more games than this
+        /// is not a candidate set, it is the library, so that word is not walked: a full scan runs over
         /// a few thousand listings, and a common word ("game", "vr") would otherwise turn the search
-        /// into a cross product. Measured against the live catalog and this library: 0 of 1 122
-        /// listings reach it, so in practice it is only the guard.
+        /// into a cross product. Words over the budget are skipped and the listing's next rarest word
+        /// is tried, so one listing walks at most (its own words) x (this budget) games. Measured
+        /// against the live catalog and this library: 0 of 1 122 listings reach it, so in practice it is
+        /// only the guard.
         /// </summary>
         internal const int SuggestionPostingCap = 40;
 
@@ -114,8 +116,13 @@ namespace Playnite.VRMods
         /// few thousand strings that is compared against every game in the batch, so normalizing it
         /// once per scan instead of once per (entry, game) pair is the difference between a few
         /// milliseconds and a few seconds per scan.
+        ///
+        /// Concurrent: the memoized key is read from the game-driven paths too, and one of them
+        /// (<see cref="VrModMetadataProvider"/>) runs on Playnite's metadata thread, so it can be hit
+        /// while a scan is filling this cache. A duplicate compute costs one normalization; a torn
+        /// plain Dictionary costs a scan.
         /// </summary>
-        private Dictionary<string, string>? _normalizedEntryCache;
+        private ConcurrentDictionary<string, string>? _normalizedEntryCache;
         private Dictionary<string, Tag>? _tagCache;
         private Dictionary<Guid, Tag>? _tagIdCache;
         private List<(string SourceName, string EntryName)>? _lastUnmatchedEntries;
@@ -627,7 +634,7 @@ namespace Playnite.VRMods
             _steamCache = new ConcurrentDictionary<string, List<Game>>(StringComparer.Ordinal);
             _gameSteamAppIds = new Dictionary<Guid, List<string>>();
             _normalizedGameCache = new ConcurrentDictionary<string, string>();
-            _normalizedEntryCache = new Dictionary<string, string>(StringComparer.Ordinal);
+            _normalizedEntryCache = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
             _tagCache = new Dictionary<string, Tag>(StringComparer.OrdinalIgnoreCase);
             _tagIdCache = new Dictionary<Guid, Tag>();
             _gameTokenIndex = new ConcurrentDictionary<string, List<Game>>(StringComparer.Ordinal);
@@ -641,6 +648,14 @@ namespace Playnite.VRMods
                 list.Add(game);
                 _gameIdCache[game.Id] = game;
                 _normalizedGameCache.TryAdd(game.Id.ToString(), normalizedName);
+
+                // Filed a second time under the name a catalog uses for the same product, when its own
+                // name ends in re-release wording: 'Tomb Raider: Game of the Year Edition' is also filed
+                // under 'tomb raider'. A listing that writes the short name then reaches every store copy
+                // of the product it names, and a listing that writes the long name still finds it by that.
+                var editionTail = EditionTailVariant(normalizedName);
+                if (editionTail != null)
+                    _gameNameCache.GetOrAdd(editionTail, _ => new List<Game>()).Add(game);
 
                 // What this game IS in Steam terms, computed once per game: its store links, plus the
                 // provider id the Steam library integration wrote when it imported the game. Both sides
@@ -839,6 +854,36 @@ namespace Playnite.VRMods
             return sb.ToString().Trim();
         }
 
+        /// <summary>
+        /// The EXTRA key a name is also compared by when it ends in re-release wording - see
+        /// <see cref="VrModNameMatcher.StripEditionTail"/> for the word list, why it is a tail and not a
+        /// word-level strip, and the pairs it was measured against. Library names are the side that
+        /// carries this wording: 150 of 2 520 real library names, against 5 of 695 real catalog headings
+        /// (PlayniteVRmods-dev/tools/NormAb, run over this library and the live catalog headings).
+        ///
+        /// null when the name has no such tail - 94 % of the library names measured here - which is how
+        /// the extra comparison stays free where there is nothing to gain.
+        ///
+        /// The stripped key is ADDITIONAL, never a replacement: every name is still compared by the
+        /// wording it actually wrote, so this rule can only add pairs and cannot lose one. That matters
+        /// because the words a name wrote are what its comparison tolerates - 'DOOM 3 BFG Edition'
+        /// against the misspelled 'DOOM 3 BFG Editon' is one edit apart (similarity 0.944), while the
+        /// same name with 'Edition' taken off scores 0.588 and the substring tier refuses it too, because
+        /// 'doom 3 bfg' is a proper substring of the longer name and that rule exists so 'doom' never
+        /// matches 'DOOM Eternal'.
+        /// </summary>
+        private static string? EditionTailVariant(string normalizedKey)
+        {
+            var stripped = VrModNameMatcher.StripEditionTail(normalizedKey);
+            return stripped == normalizedKey ? null : stripped;
+        }
+
+        /// <summary>
+        /// The library game's own matching key, memoized for the current scan: the name as written. A
+        /// re-release tail is an extra key beside it (<see cref="EditionTailVariant"/>), never a rewrite
+        /// of it, and a name a person reads is never rewritten at all - the review dialog, the tags and
+        /// the log lines that quote a game still show its title.
+        /// </summary>
         private string GetNormalizedGameName(Game game)
         {
             if (_normalizedGameCache != null && _normalizedGameCache.TryGetValue(game.Id.ToString(), out var cached))
@@ -1024,7 +1069,20 @@ namespace Playnite.VRMods
         /// decided instead of appearing in the library on their own.
         /// </summary>
         private float NameScoreFor(VrModEntry entry, Game game)
-            => VrModNameMatcher.GetMatchScore(entry.GameName, game.Name, _settings.FuzzyMatchThreshold);
+        {
+            var score = VrModNameMatcher.GetMatchScore(entry.GameName, game.Name, _settings.FuzzyMatchThreshold);
+
+            // The library record's other name - the one without its re-release tail. The rule that calls
+            // 'Tomb Raider: Game of the Year Edition' the same product as 'Tomb Raider' is an assertion,
+            // not a near miss, so it has to read as 1.00 here too or the review dialog would ask about a
+            // pairing the matching rules already settled.
+            var tailKey = EditionTailVariant(VrModNameMatcher.Normalize(game.Name));
+            if (tailKey == null)
+                return score;
+            var tailScore = VrModNameMatcher.GetMatchScoreNormalized(
+                VrModNameMatcher.Normalize(entry.GameName), tailKey, _settings.FuzzyMatchThreshold);
+            return tailScore > score ? tailScore : score;
+        }
 
         /// <summary>
         /// The App IDs one game claims, from the index built for this scan, recomputed when that index
@@ -1064,14 +1122,39 @@ namespace Playnite.VRMods
         /// paths ask this directly; the entry-driven paths reach the same rules through
         /// <see cref="FindGamesByIndex"/>, which is the same rules with the indexes attached.
         /// </summary>
-        private static bool EntryMatchesGame(VrModEntry entry, string normalizedGame, List<string> gameAppIds, float threshold)
+        /// <summary>
+        /// Length bound over both keys a game offers: its own name, and its name without a re-release tail
+        /// when it has one.
+        /// </summary>
+        private static bool NameCanReachThreshold(string entryKey, string gameKey, string? gameKeyTail, float threshold)
+            => VrModNameMatcher.CanReachSimilarity(entryKey, gameKey, threshold)
+               || (gameKeyTail != null && VrModNameMatcher.CanReachSimilarity(entryKey, gameKeyTail, threshold));
+
+        /// <summary>
+        /// The better of the two name scores one library record offers. Both strings are names the user's
+        /// own record goes by, so the stronger one is the pairing that record supports. A record with no
+        /// re-release tail offers one score, which is 94 % of the library measured here.
+        /// </summary>
+        private float BestNameScore(string entryKey, string gameKey, string? gameKeyTail)
+        {
+            var threshold = _settings.FuzzyMatchThreshold;
+            var score = VrModNameMatcher.GetMatchScoreNormalized(entryKey, gameKey, threshold);
+            if (gameKeyTail == null)
+                return score;
+            var tailScore = VrModNameMatcher.GetMatchScoreNormalized(entryKey, gameKeyTail, threshold);
+            return tailScore > score ? tailScore : score;
+        }
+
+        private bool EntryMatchesGame(VrModEntry entry, string normalizedGame, string? normalizedGameTail, List<string> gameAppIds, float threshold)
         {
             var entryAppId = entry.SteamAppIdForMatch;
             if (SteamIdsMatch(entryAppId, gameAppIds))
                 return true;
             if (SteamIdsConflict(entryAppId, gameAppIds))
                 return false;
-            return VrModNameMatcher.GetMatchScore(NormalizeForMatchFast(entry.GameName), normalizedGame, threshold) >= threshold;
+            // The memoized key, not a fresh normalization per (game, entry) pair: this runs over the
+            // whole catalog for every game in the library, and the key is the same string every time.
+            return BestNameScore(GetNormalizedEntryName(entry.GameName), normalizedGame, normalizedGameTail) >= threshold;
         }
 
         /// <summary>
@@ -1117,7 +1200,7 @@ namespace Playnite.VRMods
                     AddUnique(results, g);
             }
 
-            var normalizedEntry = NormalizeForMatchFast(entry.GameName);
+            var normalizedEntry = GetNormalizedEntryName(entry.GameName);
             if (string.IsNullOrEmpty(normalizedEntry) || _gameNameCache == null)
                 return results;
 
@@ -1216,6 +1299,14 @@ namespace Playnite.VRMods
         ///   brought back to ask again.</description></item>
         /// </list>
         ///
+        /// The search walks the listing's words by posting count in GROUPS: a word carried by the same
+        /// number of library games as another word of the same listing is equally good evidence about
+        /// this listing, so every word of one rarity is searched before the next rarity is tried, and a
+        /// group that names a product ends the search. Candidates gathered from several words of one
+        /// group are then ranked by App-ID agreement, then verdict, then how much of both names their
+        /// shared run explains — never by which word reached them, because a posting count is a fact
+        /// about the library and not about the pair.
+        ///
         /// Nothing here is applied: no tag, no link, no decision. A suggestion becomes a match only
         /// through a saved decision, which the first block of <see cref="FindGamesByIndex"/> then
         /// carries on every later scan.
@@ -1233,21 +1324,43 @@ namespace Playnite.VRMods
             if (entryTokens.Count == 0)
                 return suggestions;
 
-            // Reach the candidates through the rarest word the listing uses. "Skyrim VR Mod List" is
-            // found by "skyrim", not by "mod" or "list": the common words post to most of the
-            // library, and a posting list that big is not a candidate set, it is the library.
-            //
             // A word the library does not have at all is skipped rather than treated as "rarest with
             // zero postings": it proves only that the listing says something the library does not, and
             // the pair the feature exists to surface is exactly the one whose extra word is new here —
             // 'Brothers: A Tale of Two Sons Remake' against the library's 'Brothers: A Tale of Two
             // Sons'. Measured over 1 122 live listing names against this 3 045-game library: 638 of them
             // carry at least one word the library lacks, and taking the rarest PRESENT word instead of
-            // the bare rarest raises the review rows the rules can justify from 127 to 145. Nothing is
-            // suggested only when the library shares not one word with the listing.
+            // the bare rarest raises the review rows the rules can justify from 127 to 145.
+            //
+            // The words are put in rarest-first ORDER and then tried one at a time, rather than one
+            // word being picked outright, because the rarest word is not always the word that names a
+            // product. A word that labels how a product was reached posts to few games and so wins a
+            // rarest-first choice while every game carrying it is some other product: 'Yooka-Laylee Mod
+            // VookaRaylee by Eusth' reaches the library through 'mod' (5 games carry it, and all five
+            // are unrelated products the token rules refuse) instead of through 'yooka' (6 games, three
+            // of them the product the listing names), and under a single pick the listing was offered
+            // nothing at all. Posting counts are a property of the whole library, so this is not a
+            // quirk of one listing: measured on 1 348 listing names against this library, 6 pairings
+            // disappeared when a normalizer change moved one word's posting count by one.
+            //
+            // So the search takes the first word whose postings survive the token-run rules below, and
+            // a rarer word that names nothing does not end it. Nothing is suggested only when the
+            // library shares not one word with the listing, or every shared word it has is too common
+            // to be a candidate set.
+            //
+            // The unit of that walk is a GROUP of words with the same posting count, not one word: two
+            // words of equal rarity are equally good evidence about this listing, so the order the
+            // listing happened to write them in must not decide which two rows a person is offered.
+            // 44 of the 1 348 live listing names tie for their rarest library-present word. Searching
+            // the whole group costs 57 extra CompareTokenRuns calls out of 7 569 (+0.8%) and adds one
+            // candidate; searching every shared word regardless of rarity would cost 1 319 (+17%) for
+            // three, and those three are word coincidences ('The Walking Dead: Onslaught VR' against
+            // 'Dead by Daylight'), so rarity stays the thing that keeps a candidate set about the
+            // product the listing names. Measured in tools/Stats202 (see its README).
+            var searchableTokens = new List<(string Token, int Posting)>();
             string? rarestToken = null;
             var rarestPosting = int.MaxValue;
-            foreach (var token in entryTokens)
+            foreach (var token in entryTokens.Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 if (!index.TryGetValue(token, out var posting) || posting.Count == 0)
                     continue;
@@ -1256,17 +1369,27 @@ namespace Playnite.VRMods
                     rarestPosting = posting.Count;
                     rarestToken = token;
                 }
+                if (posting.Count > SuggestionPostingCap)
+                    continue;
+                searchableTokens.Add((token, posting.Count));
             }
-            if (rarestToken == null || rarestPosting == 0)
-                return suggestions;
-            if (rarestPosting > SuggestionPostingCap)
+            if (rarestToken == null)
+                return suggestions;   // the library shares no word at all with this listing
+            if (searchableTokens.Count == 0)
             {
                 _logger.Debug($"VRMod Tag Service: suggestion search skipped for '{SafeLogText(entry.GameName)}' "
-                    + $"(rarest word '{rarestToken}' is carried by {rarestPosting} games).");
+                    + $"(every shared word is carried by more than {SuggestionPostingCap} games; the rarest is "
+                    + $"'{rarestToken}' at {rarestPosting}).");
                 return suggestions;
             }
 
+            // Rarest first. Ties keep the order the listing wrote its words in (OrderBy is a stable sort).
+            var orderedTokens = searchableTokens.OrderBy(t => t.Posting).ToList();
+
             var candidates = new List<VrModMatchSuggestion>();
+            // A game can be reached through several words of one group; keep one row per game, holding
+            // the reading that explains the most of both names.
+            var candidateIndexByGame = new Dictionary<Guid, int>();
             var decidedCount = 0;
             var entryAppId = entry.SteamAppIdForMatch;
             // A pair the ordinary matching path already produces is not a suggestion: it is already a
@@ -1274,55 +1397,93 @@ namespace Playnite.VRMods
             // ask for entries with no match at all, so in a scan this set is empty — the filter is
             // here so the rule is a property of the method rather than of how it happens to be called.
             var alreadyMatched = new HashSet<Guid>(FindGamesByIndex(entry).Select(g => g.Id));
-            foreach (var game in index[rarestToken])
+            string? lastSearchedToken = null;
+            // Rarest group first (GroupBy yields groups in the order their rarity first appears, and
+            // orderedTokens is sorted by posting count).
+            foreach (var rarityGroup in orderedTokens.GroupBy(t => t.Posting))
             {
-                if (alreadyMatched.Contains(game.Id))
-                    continue;
-
-                var run = VrModNameMatcher.CompareTokenRuns(entry.GameName, game.Name);
-                if (run.Kind != TokenRunKind.SameProduct && run.Kind != TokenRunKind.NeedsALook)
-                    continue;
-                if (!run.SourceIsCarriedByGame && !run.GameIsCarriedBySource)
-                    continue;
-
-                if (HasStoredDecision(entry, game.Id))
+                foreach (var tokenGroup in rarityGroup)
                 {
-                    // Somebody already answered this question. A Rejected pair is not asked again; an
-                    // Accepted pair is already a row of its own (the saved decision restores it as a
-                    // match), and listing it twice — once Accepted, once Pending — would read as two
-                    // facts about the same game.
-                    decidedCount++;
-                    continue;
+                    lastSearchedToken = tokenGroup.Token;
+                    foreach (var game in index[tokenGroup.Token])
+                    {
+                        if (alreadyMatched.Contains(game.Id))
+                            continue;
+
+                        var run = VrModNameMatcher.CompareTokenRuns(entry.GameName, game.Name);
+                        if (run.Kind != TokenRunKind.SameProduct && run.Kind != TokenRunKind.NeedsALook)
+                            continue;
+                        if (!run.SourceIsCarriedByGame && !run.GameIsCarriedBySource)
+                            continue;
+
+                        if (HasStoredDecision(entry, game.Id))
+                        {
+                            // Somebody already answered this question. A Rejected pair is not asked again; an
+                            // Accepted pair is already a row of its own (the saved decision restores it as a
+                            // match), and listing it twice — once Accepted, once Pending — would read as two
+                            // facts about the same game.
+                            decidedCount++;
+                            continue;
+                        }
+
+                        var reason = DescribeTokenRun(run);
+                        var gameAppIds = GetGameSteamAppIds(game);
+                        var idsDisagree = SteamIdsConflict(entryAppId, gameAppIds);
+                        if (idsDisagree)
+                        {
+                            // The names say one product, the store ids say two. The automatic path refuses
+                            // this pairing outright (see FindGamesByIndex); here it is shown instead of
+                            // silently dropped, with both ids named, because "my library's Steam copy is not
+                            // the product that listing says" is a fact a person can settle and this plugin
+                            // cannot.
+                            reason = $"{reason}; their Steam App IDs disagree (the listing says {entryAppId}, this game says {string.Join(", ", gameAppIds)})";
+                        }
+
+                        var candidate = new VrModMatchSuggestion(game, entry.GameName, reason,
+                            run.Kind, VrModNameMatcher.ComputeSimilarity(VrModNameMatcher.Normalize(entry.GameName),
+                                VrModNameMatcher.Normalize(game.Name)), idsDisagree,
+                            run.SharedTokenCount, run.ExtraSourceTokens.Count + run.ExtraGameTokens.Count);
+                        if (candidateIndexByGame.TryGetValue(game.Id, out var held))
+                        {
+                            if (ExplainsMore(candidates[held], candidate))
+                                candidates[held] = candidate;
+                            continue;
+                        }
+
+                        candidateIndexByGame[game.Id] = candidates.Count;
+                        candidates.Add(candidate);
+                    }
                 }
 
-                var reason = DescribeTokenRun(run);
-                var gameAppIds = GetGameSteamAppIds(game);
-                var idsDisagree = SteamIdsConflict(entryAppId, gameAppIds);
-                if (idsDisagree)
-                {
-                    // The names say one product, the store ids say two. The automatic path refuses
-                    // this pairing outright (see FindGamesByIndex); here it is shown instead of
-                    // silently dropped, with both ids named, because "my library's Steam copy is not
-                    // the product that listing says" is a fact a person can settle and this plugin
-                    // cannot.
-                    reason = $"{reason}; their Steam App IDs disagree (the listing says {entryAppId}, this game says {string.Join(", ", gameAppIds)})";
-                }
-
-                candidates.Add(new VrModMatchSuggestion(game, entry.GameName, reason,
-                    run.Kind, VrModNameMatcher.ComputeSimilarity(VrModNameMatcher.Normalize(entry.GameName),
-                        VrModNameMatcher.Normalize(game.Name)), idsDisagree));
+                // A rarity group that named a product wins the search even when a rarer word existed:
+                // every word of that group has now had its turn, and the more common words below it
+                // describe the library, not this listing.
+                if (candidates.Count > 0)
+                    break;
             }
 
             if (candidates.Count == 0)
+            {
+                _logger.Debug($"VRMod Tag Service: '{SafeLogText(entry.GameName)}' searched {orderedTokens.Count} shared "
+                    + $"word(s) (rarest '{orderedTokens[0].Token}' at {orderedTokens[0].Posting}, last tried "
+                    + $"'{lastSearchedToken}') and no game carrying any of them named the kind of product this is.");
                 return suggestions;
+            }
 
             // A pair the App IDs refuse goes last: a suggestion is a recommendation-shaped row, and
             // the plugin must not recommend what its own rules reject. Re-release wording first: that
             // is the tier where the rules are closest to certain, and it is the one a person can
-            // accept without reading. Then by how much of the name agrees.
+            // accept without reading. Then how much of BOTH names the shared words explain — the
+            // longer run and the fewer leftover words, because several words of one rarity group can
+            // now feed this list and the whole-name similarity is display only: "Morrowind" against
+            // "The Elder Scrolls III: Morrowind GOTY Edition" scores 0.20 and is the certain pair,
+            // while a one-word coincidence against a similar-length name scores higher. Last the
+            // display score, which separates candidates the coverage facts leave level.
             var ranked = candidates
                 .OrderBy(c => c.SteamIdsDisagree ? 1 : 0)
                 .ThenBy(c => c.Kind == TokenRunKind.SameProduct ? 0 : 1)
+                .ThenByDescending(c => c.SharedTokenCount)
+                .ThenBy(c => c.LeftoverTokenCount)
                 .ThenByDescending(c => c.DisplayScore)
                 .ThenBy(c => c.Game.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
@@ -1340,6 +1501,17 @@ namespace Playnite.VRMods
 
             suggestions.AddRange(ranked.Take(SuggestionRowsPerEntry));
             return suggestions;
+        }
+
+        /// <summary>
+        /// Whether one candidate says more about the pair than another already held for the same game:
+        /// more of both names inside the shared run, then fewer words left over outside it.
+        /// </summary>
+        private static bool ExplainsMore(VrModMatchSuggestion held, VrModMatchSuggestion candidate)
+        {
+            if (candidate.SharedTokenCount != held.SharedTokenCount)
+                return candidate.SharedTokenCount > held.SharedTokenCount;
+            return candidate.LeftoverTokenCount < held.LeftoverTokenCount;
         }
 
         /// <summary>
@@ -2056,6 +2228,7 @@ namespace Playnite.VRMods
             var pendingMatches = new List<VrModReviewMatchEntry>();
 
             var normalizedGame = GetNormalizedGameName(game);
+            var normalizedGameTail = EditionTailVariant(normalizedGame);
             var threshold = _settings.FuzzyMatchThreshold;
 
             // What this game IS in Steam terms, worked out once for the whole catalog walk. A shared
@@ -2086,7 +2259,7 @@ namespace Playnite.VRMods
                         // below would never have compared them.
                         var normalizedEntry = GetNormalizedEntryName(entry.GameName);
                         if (!steamIdMatch
-                            && !VrModNameMatcher.CanReachSimilarity(normalizedEntry, normalizedGame, threshold))
+                            && !NameCanReachThreshold(normalizedEntry, normalizedGame, normalizedGameTail, threshold))
                             continue;
                         decision = MatchDecision.Pending;
                     }
@@ -2109,7 +2282,7 @@ namespace Playnite.VRMods
                             // product identifier both sides publish.
                             var score = steamIdMatch
                                 ? 1.0f
-                                : VrModNameMatcher.GetMatchScoreNormalized(GetNormalizedEntryName(entry.GameName), normalizedGame, threshold);
+                                : BestNameScore(GetNormalizedEntryName(entry.GameName), normalizedGame, normalizedGameTail);
                             if (score >= threshold)
                             {
                                 // The names agree and the App IDs do not: that is a refusal, not a near
@@ -2707,12 +2880,13 @@ namespace Playnite.VRMods
         public IEnumerable<VrModEntry> GetVrModEntriesForGame(Game game, IEnumerable<VrModEntry> allEntries)
         {
             var normalizedGame = GetNormalizedGameName(game);
+            var normalizedGameTail = EditionTailVariant(normalizedGame);
             var threshold = _settings.FuzzyMatchThreshold;
             var gameAppIds = GetGameSteamAppIds(game);
 
             foreach (var entry in allEntries)
             {
-                if (EntryMatchesGame(entry, normalizedGame, gameAppIds, threshold))
+                if (EntryMatchesGame(entry, normalizedGame, normalizedGameTail, gameAppIds, threshold))
                 {
                     yield return entry;
                 }
@@ -2752,12 +2926,13 @@ namespace Playnite.VRMods
                 return tags;
 
             var normalizedGame = GetNormalizedGameName(game);
+            var normalizedGameTail = EditionTailVariant(normalizedGame);
             var threshold = _settings.FuzzyMatchThreshold;
             var gameAppIds = GetGameSteamAppIds(game);
 
             foreach (var entry in allEntries)
             {
-                if (EntryMatchesGame(entry, normalizedGame, gameAppIds, threshold))
+                if (EntryMatchesGame(entry, normalizedGame, normalizedGameTail, gameAppIds, threshold))
                 {
                     // One category tag per (non-catalog) category — a mod may have several.
                     foreach (var category in entry.Categories)
@@ -3769,29 +3944,45 @@ namespace Playnite.VRMods
         /// would have built, thresholds and all, and the margin on both bounds is one character to
         /// keep float rounding out of a decision that changes a match.
         /// </summary>
+        /// <summary>
+        /// The canonical keys this game is looked up by: the name as written, plus - only for the 6 % of
+        /// library names that carry one - the name without its re-release tail. Two passes on 6 % of games
+        /// is the whole cost of the rule on this path.
+        /// </summary>
+        private string[] GameKeysForLookup(Game game)
+        {
+            var key = VrModNameMatcher.Normalize(GetNormalizedGameName(game));
+            var tail = EditionTailVariant(key);
+            return tail == null ? new[] { key } : new[] { key, tail };
+        }
+
         internal List<VrModEntry> GetCachedEntriesForGame(Game game)
         {
             var threshold = _settings.FuzzyMatchThreshold;
             var index = GetCatalogIndex();
-            var gameKey = VrModNameMatcher.Normalize(GetNormalizedGameName(game));
-            var gameCounts = LetterHistogram(gameKey);
             var result = new List<VrModEntry>();
-
-            var low = Math.Max(index.MinKeyLength, (int)Math.Floor(threshold * gameKey.Length) - 1);
-            var high = threshold > 0f
-                ? Math.Min(index.MaxKeyLength, (int)Math.Ceiling(gameKey.Length / threshold) + 1)
-                : index.MaxKeyLength;
-            for (var length = low; length <= high; length++)
+            var seen = new HashSet<VrModEntry>();   // entries are shared objects; identity is the dedupe
+            foreach (var gameKey in GameKeysForLookup(game))
             {
-                if (!index.ByKeyLength.TryGetValue(length, out var bucket))
-                    continue;
-                foreach (var candidate in bucket)
+                var gameCounts = LetterHistogram(gameKey);
+
+                var low = Math.Max(index.MinKeyLength, (int)Math.Floor(threshold * gameKey.Length) - 1);
+                var high = threshold > 0f
+                    ? Math.Min(index.MaxKeyLength, (int)Math.Ceiling(gameKey.Length / threshold) + 1)
+                    : index.MaxKeyLength;
+                for (var length = low; length <= high; length++)
                 {
-                    var maxLen = Math.Max(length, gameKey.Length);
-                    if (LetterOverlapUpperBound(gameCounts, candidate.LetterCounts) < threshold * maxLen - 1)
+                    if (!index.ByKeyLength.TryGetValue(length, out var bucket))
                         continue;
-                    if (VrModNameMatcher.GetMatchScoreNormalized(candidate.MatchKey, gameKey, threshold) >= threshold)
-                        result.Add(candidate.Entry);
+                    foreach (var candidate in bucket)
+                    {
+                        var maxLen = Math.Max(length, gameKey.Length);
+                        if (LetterOverlapUpperBound(gameCounts, candidate.LetterCounts) < threshold * maxLen - 1)
+                            continue;
+                        if (VrModNameMatcher.GetMatchScoreNormalized(candidate.MatchKey, gameKey, threshold) >= threshold
+                            && seen.Add(candidate.Entry))
+                            result.Add(candidate.Entry);
+                    }
                 }
             }
             return result;

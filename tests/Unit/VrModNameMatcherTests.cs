@@ -29,6 +29,16 @@ namespace PlayniteVRMods.Tests.Unit
         [TestCase("Game by Author Name", "Game")]
         [TestCase("Game VR by Author Name", "Game")]
         [TestCase("Game Flat2VR mod by Author", "Game Flat2VR mod")]
+        // A VR phrase at the end of a name, in any casing: the label is what the site calls the mod,
+        // not part of the title it names.
+        [TestCase("Game VR Mod", "Game")]
+        [TestCase("Freespace 2 VR mod", "Freespace 2")]
+        [TestCase("Game UEVR Mod", "Game")]
+        // A decoration hiding behind another decoration: the bracket is only at the end of the name
+        // once the author tail is off it.
+        [TestCase("Half-Life 2 (VR Mod) by Team Beef", "Half-Life 2")]
+        [TestCase("Prey (UEVR) by qemuZR", "Prey")]
+        [TestCase("Portal 2 VR Mod by Gistix Updated forked by Spencer0187", "Portal 2")]
         public void StripVrSuffixes_RemovesKnownSuffixes(string input, string expected)
         {
             var result = VrModNameMatcher.StripVrSuffixes(input);
@@ -40,6 +50,11 @@ namespace PlayniteVRMods.Tests.Unit
         [TestCase("  ", "")]
         [TestCase("Game", "Game")]
         [TestCase("Game VR Port", "Game VR Port")]
+        // "Mod" peels only when a VR word precedes it. These name a product; they do not label one
+        // as a mod, and "Flat2VR mod" has no space before its "VR" to license the peel.
+        [TestCase("Garry's Mod", "Garry's Mod")]
+        [TestCase("Skyrim Mod", "Skyrim Mod")]
+        [TestCase("Game Flat2VR mod", "Game Flat2VR mod")]
         public void StripVrSuffixes_PreservesNonSuffixStrings(string input, string expected)
         {
             var result = VrModNameMatcher.StripVrSuffixes(input);
@@ -59,6 +74,8 @@ namespace PlayniteVRMods.Tests.Unit
         [TestCase("Game-Name", "game name")]
         [TestCase("Game VR", "game")]
         [TestCase("Game (VR Mod)", "game")]
+        [TestCase("Freespace 2 VR mod", "freespace 2")]
+        [TestCase("Half-Life 2 (VR Mod) by Team Beef", "half life 2")]
         public void Normalize_HandlesSpecialCharsAndSuffixes(string input, string expected)
         {
             var result = VrModNameMatcher.Normalize(input);
@@ -72,6 +89,85 @@ namespace PlayniteVRMods.Tests.Unit
         {
             var result = VrModNameMatcher.Normalize(input!);
             Assert.That(result, Is.EqualTo(expected));
+        }
+
+        #endregion
+
+        #region StripEditionTail — a re-release tail comes off a LIBRARY key
+
+        /// <summary>
+        /// The pair the rule exists for: the name a library gives a re-release, reduced to the name a
+        /// catalog uses for the same product. Only library names get the extra key — see
+        /// <see cref="VrModNameMatcher.StripEditionTail"/> for the measurement and
+        /// <see cref="VrModTagService.EditionTailVariant"/> for where the extra key is wired in.
+        /// </summary>
+        private static string LibraryKey(string gameName)
+            => VrModNameMatcher.StripEditionTail(VrModNameMatcher.Normalize(gameName));
+
+        [TestCase("BioShock Infinite Complete Edition", "bioshock infinite")]
+        [TestCase("BioShock Infinite: Complete Edition", "bioshock infinite")]
+        [TestCase("Tomb Raider GAME OF THE YEAR EDITION", "tomb raider")]
+        [TestCase("Tomb Raider: Game of the Year Edition", "tomb raider")]
+        [TestCase("The Witcher 3: Wild Hunt - Game Of The Year Edition", "the witcher 3: wild hunt")]
+        [TestCase("Dragon Age: Inquisition - Game of the Year Edition", "dragon age: inquisition")]
+        // (Normalize turns '-' into a space, so 'Middle-earth' is keyed as 'middle earth' on both sides.)
+        [TestCase("Middle-earth: Shadow of Mordor Game of the Year Edition", "middle earth: shadow of mordor")]
+        [TestCase("Thief Gold", "thief")]
+        [TestCase("XCOM 2: Vanilla Edition", "xcom 2")]
+        public void StripEditionTail_RemovesAReReleaseTail(string gameName, string expected)
+        {
+            Assert.That(LibraryKey(gameName), Is.EqualTo(expected));
+        }
+
+        /// <summary>
+        /// Names that must NOT be cut — every one of them a real pair this library holds that a catalog
+        /// names. Stripping these words wherever they sit (the shape the design review suggested copying)
+        /// merged each with a different game: 'Layers of Fear' with 'F.E.A.R.' (dots make F.E.A.R. read as
+        /// "fear"), 'The Outer Wilds' with 'The Outer Worlds', 'Robinson: The Journey' with 'Deponia: The
+        /// Complete Journey', 'Life Is Strange: Before The Storm' with 'Trine 2: Complete Story', 'Zelda II:
+        /// The Adventure of Link' with 'Adventure Climb', 'After the Fall' with 'The Fall', 'Pokemon XD: Gale
+        /// of Darkness' with four other '* of Darkness' titles. A small word is not decoration: these words
+        /// are inside titles. A tail comes off only when it contains a word that can only mean a re-release.
+        /// </summary>
+        [TestCase("Layers of Fear")]
+        [TestCase("The Outer Wilds")]
+        [TestCase("After the Fall")]
+        [TestCase("Under The Waves")]
+        [TestCase("Waves")]
+        [TestCase("Robinson: The Journey")]
+        [TestCase("Candleman: The Complete Journey")]
+        [TestCase("Deponia: The Complete Journey")]
+        [TestCase("Trine 2: Complete Story")]
+        [TestCase("Life Is Strange: Before The Storm")]
+        [TestCase("Zelda II: The Adventure of Link")]
+        [TestCase("Gale of Darkness")]
+        [TestCase("Killing Floor: The Game")]
+        [TestCase("Tomb Raider: Anniversary")]
+        [TestCase("Final Mod")]
+        [TestCase("Adventure Climb")]
+        public void StripEditionTail_LeavesATailThatIsOnlySmallWordsOrASubtitle(string gameName)
+        {
+            var key = LibraryKey(gameName);
+            Assert.That(VrModNameMatcher.StripEditionTail(key), Is.EqualTo(key),
+                $"'{gameName}' lost wording it needs to stay a distinct product");
+        }
+
+        /// <summary>A name that IS re-release wording has nothing left to match on, so the key is returned
+        /// unchanged instead of becoming the empty string that matches nothing.</summary>
+        [TestCase("Complete Edition")]
+        [TestCase("Game of the Year Edition")]
+        [TestCase("Edition")]
+        public void StripEditionTail_NeverEmptiesAKey(string gameName)
+        {
+            Assert.That(LibraryKey(gameName), Is.EqualTo(VrModNameMatcher.Normalize(gameName)));
+        }
+
+        [Test]
+        public void StripEditionTail_RunOnAKeyThatAlreadyHadItsTailChangesNothing()
+        {
+            var once = LibraryKey("Tomb Raider: Game of the Year Edition");
+            Assert.That(VrModNameMatcher.StripEditionTail(once), Is.EqualTo(once),
+                "index keys carry the stripped form; the rule must not chew further on a second pass");
         }
 
         #endregion
