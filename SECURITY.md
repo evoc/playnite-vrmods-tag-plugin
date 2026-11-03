@@ -7,39 +7,38 @@ The VRMod Tags plugin reads twelve third-party websites on a schedule
 it reads into Playnite library data: tags, game Links, and matching decisions.
 That input is not trusted, and the threat model the code is written against:
 
-- **A hostile or compromised source site** can return any markup, any JSON, any
-  status code, and any `Location` header.
-- **Anything written into the library is executable later**: Playnite opens a
-  game's Link with the shell, so a Link is the dangerous write surface. Scraped
-  text is gated by `WebUrl.IsSafeLinkUrl` at every point where a Link is
-  created or merged (`VrModEntry.Link`, `VrModMetadataProvider`,
-  `VrModTagService`), so `file:`, `javascript:`, app-URI schemes,
-  `search-ms:`, credentials in the URL, and over-long URLs never reach the
-  library.
+- **A hostile or compromised source site** can return any
+  markup, any JSON, any status code, and any `Location` header.
+- **Anything written into the library is executable later**: Playnite opens
+  a game's Link with the shell, so a Link is the dangerous write surface.
+  Scraped text is gated by `WebUrl.IsSafeLinkUrl` at every point where a
+  Link is created or merged (`VrModEntry.Link`, `VrModMetadataProvider`,
+  `VrModTagService`), so `file:`, `javascript:`, app-URI schemes, `search-ms:`,
+  credentials in the URL, and over-long URLs never reach the library.
 - **A redirect is a host change.** The shared handler has
   `AllowAutoRedirect = false`; hops are followed explicitly, capped at
   `BaseVrModParser.MaxRedirectHops`, and only onto the host the plugin asked
   for (or a mirror host a parser declares). A hop off-site fails the source and
   is written to the run log instead of being parsed.
-- **Volume and pace are capped**: response size (`MaxResponseBytes`; a robots
-  file gets its own 64 KB cap), entry counts, scraped field lengths on
-  `VrModEntry` (name 200, author 100, additional info 400, Steam App ID 32),
-  curator pagination, per-host request serialization and a global in-flight cap
-  (`HttpHostGate`), a 60 s ceiling on a `Retry-After` the plugin will sit
-  through (`MaxServerRequestedWait`), a 30 s ceiling on a `Crawl-delay`
-  (`HttpHostGate.MaxCrawlDelay`), and a wall-clock scan budget with a Cancel
-  button. A site that asks for longer than one of those ceilings gets a source
-  that failed this run — not a stalled scan, and not a retry it asked us not to
-  do.
-- **robots.txt is read for its pace, not its rules.** `RobotsPolicy` fetches one
-  robots file per host per run and honours the `Crawl-delay` written for
-  `User-agent: *` (the plugin sends no User-Agent, so records naming some other
-  bot say nothing about it). `Disallow` is **deliberately not enforced**: a large
-  share of mod-catalogue sites disallow generic crawlers on precisely the pages
-  this plugin has to read, and honouring that would silently switch sources off
-  and leave the user with an empty tag set and no explanation. Reading the file
-  for its load request and not the path rules is a stated position, not an
-  oversight.
+- **Volume and pace are capped**: response size (`MaxResponseBytes`;
+  a robots file gets its own 64 KB cap), entry counts, scraped field
+  lengths on `VrModEntry` (name 200, author 100, additional info 400,
+  Steam App ID 32), curator pagination, per-host request serialization
+  and a global in-flight cap (`HttpHostGate`), a 60 s ceiling on a
+  `Retry-After` the plugin will sit through (`MaxServerRequestedWait`),
+  a 30 s ceiling on a `Crawl-delay` (`HttpHostGate.MaxCrawlDelay`),
+  and a wall-clock scan budget with a Cancel button. A site that asks
+  for longer than one of those ceilings gets a source that failed this
+  run — not a stalled scan, and not a retry it asked us not to do.
+- **robots.txt is read for its pace, not its rules.** `RobotsPolicy`
+  fetches one robots file per host per run and honours the `Crawl-delay`
+  written for `User-agent: *` (the plugin sends no User-Agent, so
+  records naming some other bot say nothing about it). `Disallow` is
+  **deliberately not enforced**: a large share of mod-catalogue sites
+  disallow generic crawlers on precisely the pages this plugin has to read,
+  and honouring that would silently switch sources off and leave the user
+  with an empty tag set and no explanation. Reading the file for its load
+  request and not the path rules is a stated position, not an oversight.
 
 ## Supported versions
 

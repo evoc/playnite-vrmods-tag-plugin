@@ -1,0 +1,15 @@
+// markdownlint-cli2: stock rules, no rule overrides.
+//
+// globs  - the authored documentation: root pages and the user manual. Build
+//          output (source/bin/**, tests/bin/** copies of these same pages) is
+//          outside the globs, so a plain `npx markdownlint-cli2` never lints
+//          generated copies.
+// ignores - tests/Parsers/snapshots/rototrobot-raw.md is scraped third-party
+//          text checked in as parser-test input (see
+//          tests/Playnite.VRMods.Tests.csproj); reformatting it would change
+//          what a test parses, so it is excluded rather than fixed. It also
+//          applies when a reviewer passes file arguments explicitly.
+{
+  "globs": ["*.md", "docs/**/*.md"],
+  "ignores": ["tests/Parsers/snapshots/rototrobot-raw.md"]
+}
