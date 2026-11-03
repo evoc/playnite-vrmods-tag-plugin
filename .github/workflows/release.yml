@@ -177,7 +177,20 @@ jobs:
               git tag "v$version"
               git push origin "v$version"
           }
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          # The base for the release notes and for GitHub's compare link: the
+          # tag this release follows. $lastTag was read before the tag above was
+          # created, so it is normally that tag. On a re-run of a version that
+          # is already tagged it points at this very release, so step one commit
+          # back to the release before it.
+          $notesBase = $lastTag
+          if ($notesBase -eq "v$version") {
+              $notesBase = git describe --tags --match "v*" --abbrev=0 `
+                  "v$version^" 2>$null
+          }
+          "version=$version" |
+              Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "previous_tag=$notesBase" |
+              Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
       - name: "Code analysis (release gate)"
         # AGENTS.md requires a 0-warning build, and the plugin project turns the
@@ -214,12 +227,64 @@ jobs:
 
       # softprops/action-gh-release v3.0.3 (folded scalar: the full SHA pin
       # is longer than this file's 80-column limit)
+      - name: Build release notes
+        # GitHub's own notes for this repo are only the compare link: measured
+        # on v1.0.0..v1.1.0, every release body was that single line, so the
+        # part that says what changed has to be written here. Commit headers
+        # are already commitlint-constrained, so their subjects read as
+        # changelog lines.
+        env:
+          PREVIOUS_TAG: ${{ steps.ver.outputs.previous_tag }}
+        run: |
+          $range = if ($env:PREVIOUS_TAG) {
+            "$env:PREVIOUS_TAG..HEAD"
+          } else { "HEAD" }
+          $subjects = @(git log --no-merges --format="%s" $range 2>$null)
+          $groups = [ordered]@{ Features = @(); Fixes = @(); Other = @() }
+          foreach ($s in $subjects) {
+            $text = ($s -replace '^[a-z]+(\([^)]*\))?!?:\s*', '').Trim()
+            if (-not $text) { $text = $s }
+            if ($s -like 'feat*') { $groups.Features += $text }
+            elseif ($s -like 'fix*') { $groups.Fixes += $text }
+            else { $groups.Other += $text }
+          }
+          $lines = New-Object System.Collections.Generic.List[string]
+          if ($groups.Features.Count) {
+            $lines.Add('### New features')
+            $groups.Features | ForEach-Object { $lines.Add("- $_") }
+          }
+          if ($groups.Fixes.Count) {
+            $lines.Add('### Fixes')
+            $groups.Fixes | ForEach-Object { $lines.Add("- $_") }
+          }
+          if ($groups.Other.Count) {
+            $lines.Add('### Other changes')
+            $groups.Other | ForEach-Object { $lines.Add("- $_") }
+          }
+          if ($lines.Count -eq 0) {
+            $lines.Add('No commits since the previous release.')
+          }
+          if (-not (Test-Path dist)) {
+            New-Item -ItemType Directory dist | Out-Null
+          }
+          $lines | Set-Content -Path dist/release-notes.md -Encoding utf8
+          $lines | ForEach-Object { Write-Host $_ }
+
       - name: Create GitHub release
         uses: >-
           softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
           tag_name: "v${{ steps.ver.outputs.version }}"
-          files: "dist/VRMod Tags-${{ steps.ver.outputs.version }}.pext"
+          files: "dist/VRMod.Tags-${{ steps.ver.outputs.version }}.pext"
+          # The action's default is to keep going when a files: glob matches
+          # nothing, which would publish a release with no package at all.
+          fail_on_unmatched_files: true
+          body_path: dist/release-notes.md
+          # At this pin the action prepends body_path content to the notes it
+          # generates, and previous_tag sets the base GitHub compares against -
+          # so the compare link GitHub adds names the same previous tag this
+          # job resolved, instead of guessing.
+          previous_tag: ${{ steps.ver.outputs.previous_tag }}
           generate_release_notes: true
           # v3.0.3 declares no `overwrite` input. The key this step carried
           # was unknown to the action, so the runner warned

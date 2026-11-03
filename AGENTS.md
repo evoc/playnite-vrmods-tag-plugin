@@ -153,7 +153,13 @@ on, and the warning gates below are run against it).
   `<type>!:`/`BREAKING CHANGE:`→major escalate it; first push without any
   tag→1.0.0), creates+pushes the tag `v<version>`, runs the full test suite,
   packages with `tools/Build-Release.ps1 -Version <version>`, and attaches
-  `dist/VRMod Tags-<version>.pext` to the GitHub Release. **Every push to
+  `dist/VRMod.Tags-<version>.pext` to the GitHub Release. The asset is dotted,
+  not spaced: GitHub rewrites a space in an asset's download name (v1.1.0 was
+  uploaded as `VRMod Tags-1.1.0.pext`, its label kept the space, its name and
+  URL became `VRMod.Tags-1.1.0.pext`), so file, asset and URL are named the
+  same way only if the file is spelled that way first. `fail_on_unmatched_files:
+  true` is set because the action's default is to publish anyway when the
+  `files:` glob matches nothing. **Every push to
   main is a release** — no prereleases; feature branches are built
   locally, never released. Procedure: merge to main with Conventional
   Commit messages — that's the whole procedure; the prefix decides whether
@@ -165,11 +171,24 @@ on, and the warning gates below are run against it).
   GitVersion does not count). Before resolving anything the workflow refuses a
   repo holding a version-shaped tag that is not exactly `vX.Y.Z`, since describe
   and GitVersion would then disagree about what is already released.
+  The release body is written by the `Build release notes` step from the commit
+  subjects since the previous tag (grouped New features / Fixes / Other,
+  prefixes stripped), passed as `body_path`. Without it the body was GitHub's
+  auto-generated notes alone, which for this repo is only the compare link —
+  measured identical on the v1.0.0, v1.0.1, v1.0.2 and v1.1.0 releases. The
+  action prepends that body to the notes it still generates, and the resolve
+  step also outputs `previous_tag` — the tag this release follows (on a re-run
+  of an already-tagged version it steps one commit back to the release before
+  it) — so the compare link GitHub adds names the same base this job resolved
+  rather than guessing one.
   Users install from the repo's Releases page —
   [github.com/evoc/playnite-vrmods-tag-plugin](https://github.com/evoc/playnite-vrmods-tag-plugin).
-  The stable latest-asset URL is
-  `https://github.com/evoc/playnite-vrmods-tag-plugin/releases/latest/download/VRMod%20Tags-<version>.pext`
-  (asset name `VRMod Tags-<version>.pext`; the space is `%20` in a URL).
+  The stable latest-asset URL appends
+  `/releases/latest/download/VRMod.Tags-<version>.pext` to the repository URL
+  above. Measured against v1.1.0: that form is 200, the spaced form
+  `…/download/VRMod%20Tags-1.1.0.pext` is 404 — every asset since v1.0.0 has
+  been the dotted name, so the spaced recipe these docs used to give has never
+  worked.
 
 ## Test suite invariants
 

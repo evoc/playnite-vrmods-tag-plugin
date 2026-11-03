@@ -2,8 +2,9 @@
 
 ## Installing
 
-1. Download the latest release package (`VRMod Tags-<version>.pext`) from the project's
-   GitHub Releases page.
+1. Download the latest release package (`VRMod.Tags-<version>.pext`) from the
+   project's GitHub Releases page. The name GitHub serves the download under is
+   spelled with a dot, not a space.
 2. Double-click the package. Playnite registers itself as the handler for `.pext` files,
    asks for confirmation, and installs the add-on.
 3. Restart Playnite — the package is applied on the next startup.

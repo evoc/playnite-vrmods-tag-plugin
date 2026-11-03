@@ -215,7 +215,7 @@ $repoRoot = if ($RepoRoot) { (Resolve-Path $RepoRoot).Path } else { (Resolve-Pat
 $proj = Join-Path $repoRoot "source\Playnite.VRMods.csproj"
 $staging = Join-Path $env:TEMP ("vrmodtags-release-" + [Guid]::NewGuid().ToString("N"))
 # dist\ is the release workflow's output directory (its release step attaches
-# dist\VRMod Tags-<version>.pext). A build that is not -Version goes beside it.
+# dist\VRMod.Tags-<version>.pext). A build that is not -Version goes beside it.
 $DistDir = if ($DistDir) { $DistDir } elseif ($explicitVersion) { Join-Path $repoRoot "dist" } else { Join-Path $repoRoot "dist\local" }
 if (-not $explicitVersion -and $PSBoundParameters.ContainsKey("DistDir")) {
     Write-Warning "-DistDir names the output folder only: without -Version this is still a test build (4th version part), so a folder you picked in order to attach something is the wrong place for it"
@@ -404,7 +404,13 @@ try {
     # 5. Zip the folder contents to the ZIP root (CreateFromDirectory = no leading
     #    folder, forward-slash entry names - what Playnite's ZipFile.OpenRead expects).
     if (-not (Test-Path $DistDir)) { New-Item -ItemType Directory -Path $DistDir | Out-Null }
-    $pkgName = "VRMod Tags-$packageVersion.pext"
+    # The stem is dotted, not spaced: GitHub rewrites a space in an asset's
+    # download name (the v1.1.0 upload kept the label "VRMod Tags-1.1.0.pext"
+    # but its name, and therefore its URL, became VRMod.Tags-1.1.0.pext), so a
+    # spaced file never downloads under the name the build reports. Measured on
+    # every release since v1.0.0: the %20 form 404s, the dotted name 200s.
+    # Naming the file the way the URL spells it keeps one spelling everywhere.
+    $pkgName = "VRMod.Tags-$packageVersion.pext"
     $pkg = Join-Path $DistDir $pkgName
     if (Test-Path $pkg) { Remove-Item $pkg }
     Add-Type -AssemblyName System.IO.Compression.FileSystem
