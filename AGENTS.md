@@ -101,13 +101,17 @@ on, and the warning gates below are run against it).
   into the assembly at build time (`GitVersion.MsBuild` package; config in
   `GitVersion.yml`), and `tools/Build-Release.ps1` stamps the packaged
   `extension.yaml` from the stamp it reads off the published DLL, so the
-  manifest and the assembly inside one package always agree. Before that stamp
-  the packaged manifest kept the committed `Version` from `source/extension.yaml`
-  while the DLL beside it carried a higher git-derived one. The committed value
-  is a placeholder that packaging overwrites — no packaged build reports it, and
-  a bare `dotnet build` leaves it in `source/bin/` next to a git-stamped
-  assembly. (`Properties/AssemblyInfo.cs` carries no version — only
-  `InternalsVisibleTo`.)
+  manifest and the assembly inside one package agree. The script never stamps
+  the assembly — `dotnet publish` is called with no version argument — so that
+  agreement is the CI ordering (tag HEAD, then build), not a number the script
+  hands to the compiler. A `-Version` those tags do not name is refused; see
+  the packaging bullet. Before that stamp existed the packaged manifest kept
+  the committed `Version` from `source/extension.yaml` while the DLL beside it
+  carried a higher git-derived one. The committed value is a placeholder that
+  packaging overwrites — no packaged build reports it, and a bare `dotnet build`
+  leaves it in `source/bin/` beside a git-stamped assembly. The
+  `Properties/AssemblyInfo.cs` file carries no version — only
+  `InternalsVisibleTo`.
 - **Release packaging (`.pext`)** — `tools/Build-Release.ps1`. Requirements it
   enforces: Release
   publish; **`Playnite.SDK.dll` must NOT be in the package** (the host
@@ -135,7 +139,16 @@ on, and the warning gates below are run against it).
   install. `-Offline` skips the fetch and guards against this clone's own tags;
   a clone with no `origin` remote does the same and says so. `-Version <x>` is
   the workflow's contract and the re-cut escape: it names the version, skips the
-  fetch and the guard, and writes into `dist\`. Version-shaped tags are the
+  fetch and the guard, and writes into `dist\` — but it must match the number
+  git already stamped into the published DLL. Measured in a scratch clone whose
+  HEAD sits one commit past `v1.1.0`: `-Version 9.9.9` refuses and writes no
+  package at all (`refusing to package 9.9.9: the Playnite.VRMods.dll inside is
+  stamped 1.1.1, and this script does not stamp binaries`), and so does
+  `-Version 1.1.0` there, because the label names an older release than the
+  commit being packaged. `-AllowStampMismatch` packages that split knowingly and
+  says so in a warning. Tag HEAD first and the numbers agree: the same clone at
+  `-Version 1.1.1` after `git tag v1.1.1` packaged with no warning, which is the
+  order the workflow uses. Version-shaped tags are the
   release namespace, so a tag that is not exactly `vX.Y.Z` stops the build
   instead of being filtered out: `git describe --tags --match v*` (which is how
   the workflow picks its next version) and GitVersion read tags by different

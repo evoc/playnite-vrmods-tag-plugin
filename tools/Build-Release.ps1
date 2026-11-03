@@ -25,7 +25,9 @@
 #                     version guard: this is the release workflow's path (it
 #                     resolves the number itself and tags HEAD with it before it
 #                     runs this script) and the escape hatch for a deliberate
-#                     re-cut. -Version with an empty value is an error.
+#                     re-cut. -Version with an empty value is an error. The
+#                     label must match the number git already stamped into the
+#                     binary; -AllowStampMismatch packages it anyway.
 #   otherwise         the version GitVersion.MsBuild already stamped on the
 #                     published assembly - the same git-derived number the
 #                     release workflow tags - read off the artifact instead of
@@ -58,7 +60,8 @@ param(
     [string]$DistDir = "",
     [string]$RepoRoot = "",
     [string]$Version = "",
-    [switch]$Offline
+    [switch]$Offline,
+    [switch]$AllowStampMismatch
 )
 
 $ErrorActionPreference = "Stop"
@@ -317,7 +320,7 @@ try {
         $assemblyStamp = Get-StampedVersion (Join-Path $staging $module)
     } catch {
         if (-not $explicitVersion) { throw "version unresolved: $($_.Exception.Message)" }
-        Write-Warning ("assembly version unreadable ({0}); -Version is used and the drift check is skipped" -f $_.Exception.Message)
+        Write-Warning ("assembly version unreadable ({0}); -Version is used, and the label check below cannot compare the two" -f $_.Exception.Message)
     }
     $resolved = $null
     $versionSource = ""
@@ -339,6 +342,44 @@ try {
     }
     $versionText = "{0}.{1}.{2}" -f $resolved.Major, $resolved.Minor, $resolved.Build
     if ($isTestBuild) { $versionText = "$versionText.$($resolved.Revision)" }
+
+    # A hand-named -Version must match the number already stamped into the
+    # binary. This script never tells the compiler a version: dotnet publish is
+    # given no version argument, so the assembly's stamp comes from git tags and
+    # from nothing else (measured on this project: FileVersion 1.1.0.0,
+    # ProductVersion 1.1.0+Branch.main.Sha.<commit>). The release workflow stays
+    # consistent because it tags HEAD before it runs this script. A -Version the
+    # tags do not name would wrap a DLL stamped one version in a package labelled
+    # another - the drift that once put a 1.1.0 assembly in a package marked
+    # 1.0.0 - and the two numbers then answer from different places: the release
+    # page and manifest say one, the file's own version properties and any crash
+    # report say the other. That is refused here. -AllowStampMismatch packages it
+    # knowingly.
+    if ($explicitVersion) {
+        if (-not $assemblyStamp) {
+            if (-not $AllowStampMismatch) {
+                throw ("refusing to package {0}: the version stamped in {1} could not be read, so the " -f $versionText, $module) +
+                      "package label and the binary inside it cannot be compared. Pass -AllowStampMismatch " +
+                      "to package without that comparison."
+            }
+        } else {
+            $stampedText = "{0}.{1}.{2}" -f $assemblyStamp.Major, $assemblyStamp.Minor, $assemblyStamp.Build
+            if ($stampedText -ne $versionText) {
+                if ($AllowStampMismatch) {
+                    Write-Warning ("-AllowStampMismatch: packaging {0} around a {1} stamped {2}" -f $versionText, $module, $stampedText)
+                } else {
+                    $msg = "refusing to package {0}: the {1} inside is stamped {2}, and this script does not " -f $versionText, $module, $stampedText
+                    $msg += "stamp binaries - dotnet publish gets no version argument, so the assembly's " +
+                            "version comes from the git tags reachable from HEAD. A -Version those tags do " +
+                            "not name ships a package labelled $versionText around a DLL that reports " +
+                            "$stampedText in its own file properties and in crash reports. Tag the commit " +
+                            "you mean to release (git tag v$versionText, then git push origin v$versionText) " +
+                            "and build again, or pass -AllowStampMismatch to package the split knowingly."
+                    throw $msg
+                }
+            }
+        }
+    }
 
     # Refuse to build a version at or below what has already been released.
     # Playnite extracts every .pext into Extensions\<Id> in place and does not
@@ -445,15 +486,14 @@ try {
     }
     $sha = -join ($shaBytes | ForEach-Object { $_.ToString("X2") })
 
-    # The manifest and the binary beside it must say the same thing. A mismatch
-    # is not fatal for an explicit -Version (a deliberate re-cut of an older
-    # commit is exactly that), but it is never silent: this is the drift that
-    # made a 1.0.0-labelled package ship a 1.1.0 assembly.
+    # The manifest as written is re-read and compared with the version the
+    # package reported, so a manifest that never got stamped cannot slip out
+    # beside a binary of a different version. The label-versus-stamp decision
+    # itself ran earlier, before anything was packaged.
     $stampedText = if ($assemblyStamp) { "{0}.{1}.{2}" -f $assemblyStamp.Major, $assemblyStamp.Minor, $assemblyStamp.Build } else { "unreadable" }
     if ($assemblyStamp -and $stampedText -ne $packageVersion) {
-        # A test build adds a 4th part on purpose, so the difference there is
-        # stated, not warned about. Any other difference is the drift this block
-        # exists to catch: a 1.0.0-labelled package that shipped a 1.1.0 assembly.
+        # The remaining legitimate difference is a test build's deliberate 4th
+        # part, so it is stated rather than warned about.
         if ($isTestBuild) {
             Write-Host ("  note          : manifest {0} = assembly {1} + a test-only 4th part" -f $packageVersion, $stampedText)
         } else {
