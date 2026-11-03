@@ -67,17 +67,20 @@ Windows only: the plugin targets `net462` and WPF (Playnite's own extension targ
 - Version comes from git through GitVersion: the nearest tag plus the commits since it. GitVersion
   applies one increment per release, with patch as the floor, and the Conventional-Commit messages
   decide whether it escalates to minor or major ([GitVersion.yml](GitVersion.yml)).
-  A clone with no tags builds from `0.0.0` plus that one increment, tagged with a prerelease suffix
-  counting the commits (`0.0.1-<n>`). `extension.yaml` carries `1.0.0` as a
-  baseline: [the release workflow](.github/workflows/release.yml) rewrites the manifest it packages,
-  and a local build keeps the repo value unless you pass `-Version` to `tools/Build-Release.ps1`.
+  A clone with no tags starts at GitVersion's own floor `0.1.0`, with the commit count as a
+  prerelease suffix (`0.1.0-<n>`), and no Conventional-Commit increment applies until a tag exists
+  (measured on 6.8.2: a `feat:` commit in a tag-less clone still stamps `0.1.0`). `extension.yaml`
+  carries `1.0.0` as a baseline that nothing ships with: `tools/Build-Release.ps1` rewrites the
+  manifest it packages from the version stamped on the published assembly, so a packaged manifest and
+  the DLL beside it always agree.
 
 ### How a release is produced
 
 [.github/workflows/release.yml](.github/workflows/release.yml) releases every push to `main`
-(also manually, with an explicit version): it resolves the version, builds on `windows-latest`,
+(also manually, with an explicit 3-part version): it resolves the version, builds on `windows-latest`,
 packages the `.pext` users install, tags it `vX.Y.Z`, and publishes the release with the package
-attached. An untagged history resolves to `1.0.0`; after that every push bumps at least patch — a
+attached. An untagged history is named `1.0.0` by the workflow itself — GitVersion would stamp
+`0.1.0`. After the first tag every push bumps at least patch — a
 `feat:` takes it to a minor, `<type>!:` or a `BREAKING CHANGE:` footer to a major. Third-party
 Actions are pinned to full commit SHAs, and the job fails if anything in the dependency graph is
 flagged.
@@ -85,7 +88,7 @@ flagged.
 ```powershell
 dotnet build -c Release source/Playnite.VRMods.csproj   # the add-on
 dotnet test  tests/Playnite.VRMods.Tests.csproj         # unit, parser and integration suites
-pwsh tools/Build-Release.ps1                            # a .pext you can double-click
+pwsh tools/Build-Release.ps1                            # a test build: dist\local\, double-clickable
 ```
 
 `tools/Build-Release.ps1` publishes, strips the `Playnite.SDK.dll` that `dotnet publish` copies

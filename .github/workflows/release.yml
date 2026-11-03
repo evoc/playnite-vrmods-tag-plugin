@@ -121,17 +121,50 @@ jobs:
         id: ver
         run: |
           $lastTag = git describe --tags --match "v*" --abbrev=0 2>$null
+
+          # Every release tag must be exactly vX.Y.Z, because the two tools
+          # that read tags here do not read them the same way (measured on
+          # GitVersion 6.8.2 + git 2.56): describe matches v1.2.0.1 and
+          # v1.2.0-beta1 but not a bare 2.0.0; GitVersion counts a bare 2.0.0
+          # and v1.2.0-beta1 as versions (1.2.0-beta1 -> 1.2.0) and ignores
+          # v1.2.0.1. A tag outside both shapes makes the next version
+          # unresolvable - it would be published under a version that exists.
+          $stray = git tag --list | Where-Object { $_ -match '^v?\d+\.\d+' }
+          $stray = @($stray | Where-Object { $_ -notmatch '^v\d+\.\d+\.\d+$' })
+          if ($stray) {
+              throw "version tag(s) outside the vX.Y.Z scheme: " +
+                    (($stray | Sort-Object) -join ", ") +
+                    " - describe and GitVersion read them differently, so " +
+                    "the next release version cannot be resolved safely"
+          }
+
           if ($env:INPUT_VERSION) {
-              # Manual run with an explicit version (e.g. a re-cut).
+              # Manual run with an explicit version (e.g. a re-cut), 3-part
+              # only: that is the shape every other rule here counts. A 4-part
+              # value would tag v1.2.0.1, which 'git describe --match v*'
+              # matches (so this step no longer treats the repo as untagged)
+              # while GitVersion ignores it (measured on 6.8.2: MajorMinorPatch
+              # stayed 0.1.0) - the next release would then land under a
+              # version that already exists.
+              if ($env:INPUT_VERSION -notmatch '^\d+\.\d+\.\d+$') {
+                  throw "INPUT_VERSION '$env:INPUT_VERSION' must be exactly " +
+                        "major.minor.patch: 3 parts is the only shape this " +
+                        "project's versioning counts"
+              }
               $version = $env:INPUT_VERSION
           } elseif (-not $lastTag) {
-              # First release: no tag exists yet.
+              # First release: no version-shaped tag exists (checked above).
               $version = "1.0.0"
           } else {
               # Next stable version from the Conventional Commits since the
               # last tag. MajorMinorPatch is the stable version; the suffix
               # only appears in FullSemVer, which we never use.
-              $gv = dotnet-gitversion -l json | ConvertFrom-Json
+              # '-l' is GitVersion's LOGFILE option, not an output format: on
+              # 6.8.2 (measured) 'dotnet-gitversion -l json' writes a log file
+              # named 'json' into the workspace and only prints JSON because
+              # JSON is already the default. -output is the format option; with
+              # no -showvariable GitVersion emits the whole map.
+              $gv = dotnet-gitversion -output json | ConvertFrom-Json
               $version = $gv.MajorMinorPatch
           }
           $parsed = $null
