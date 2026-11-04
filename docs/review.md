@@ -42,17 +42,20 @@ A disagreement is **not** suggested. If the two names carry different numbers
 word, the pair is refused and never reaches the review grid at all — those rows
 would be noise, and a wrong Accept there would write tags for the wrong game.
 
-When several library games could fit one listing, at most two rows are
-shown, and they are the pairs whose names explain each other most: the
-longest unbroken run of shared words, with the fewest words left over
-on either side. The **Score** number is not that ranking — *Morrowind*
-against *The Elder Scrolls III: Morrowind GOTY Edition* scores 0.20
-and is the strongest of those two facts, which is why the number is
-shown as information rather than used to decide what you are offered.
+When several library games could fit one listing, **every** candidate the name
+rules can offer is shown — not a first two — ranked with the strongest pairing
+first: re-release packaging before wording the rules cannot judge, then the
+longest unbroken run of shared words, then the fewest words left over on either
+side. The **Score** number is not that ranking — *Morrowind* against *The Elder
+Scrolls III: Morrowind GOTY Edition* scores 0.20 and is the strongest of those
+two facts, which is why the number is shown as information rather than used to
+decide what you are offered, or in what order.
 
-- Hover the **Status** cell to read the reason: which words
+- Hover the **Status** cell to read the reason and the rank: which words
   of the listing name the game name contains, which words of
-  the game name are left over, and whether a number disagrees.
+  the game name are left over, whether a number disagrees, and where the
+  row sits in its listing's candidate list (**candidate 3 of 8**). The grid
+  sorts by column, so the rank the search decided lives in the tooltip.
 - Accepting the row records the pairing by name. Every later scan then
   matches that listing to that game whatever either is called — for that
   listing and that game only, so a sibling sequel is not dragged in.
@@ -96,12 +99,17 @@ with no Steam link, match by name exactly as they always did.
 - **Alt accelerators** (from anywhere in the dialog): **Alt+F** the filter
   box, **Alt+T** the time window, **Alt+S** the status menu, **Alt+C**
   the columns menu, **Alt+H** the help, and **Alt+A** / **Alt+R** accept
-  / reject directly (the selected rows, or every match when none are
-  selected). Each control also shows its accelerator in its tooltip.
+  / reject directly (the selected rows, or every row the filters are showing
+  when none are selected). Each control also shows its accelerator in its
+  tooltip.
 
 - **Bulk buttons** (bottom right): with no row selected, **Accept All**
-  / **Reject All** act on everything; with one or more rows selected they
-  become **Accept Selected** / **Reject Selected** and act on the selection.
+  / **Reject All** act on the rows the filters are showing. A row hidden by
+  the filter box, the status menu, the time window or **Changed only** keeps
+  the status it already has, and the caption counts both halves
+  (**Reject 12 shown · 118 keep their status**). With one or more rows
+  selected they become **Accept Selected** / **Reject Selected** and act on
+  the selection alone.
 - A decision you change in the dialog is *italic* in the **Status** column
   until you click **Save** — **Save** persists every changed decision to
   your library (tags and links are applied), **Cancel** closes the dialog

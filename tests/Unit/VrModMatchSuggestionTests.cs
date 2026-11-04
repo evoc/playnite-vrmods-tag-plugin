@@ -335,9 +335,11 @@ namespace PlayniteVRMods.Tests.Unit
         }
 
         /// <summary>
-        /// The review queue is where a human decides, so its size and order are design decisions: at
-        /// most <see cref="VrModTagService.SuggestionRowsPerEntry"/> rows per listing, the tier the
-        /// rules are closest to certain about first.
+        /// The review queue is where a human decides, so its size and order are design decisions: every
+        /// candidate the gates admit is a row, the tier the rules are closest to certain about first.
+        /// There used to be a cap of two rows per listing, and it hid the pair this feature exists to
+        /// surface (task 213, decision 5-i): a candidate the rules suspect is cheaper for a person to
+        /// read and dismiss than a wrong decision that comes back next scan.
         ///
         /// The Gold row is gone from this fixture on purpose. 'Redout Space Legend Gold' differs from the
         /// listing by re-release wording alone, and that is now asserted rather than asked about — the
@@ -347,7 +349,7 @@ namespace PlayniteVRMods.Tests.Unit
         /// ('Eternity').
         /// </summary>
         [Test]
-        public void FindSuggestedGames_CapsTheRowsAndPutsTheCertainTierFirst()
+        public void FindSuggestedGames_ReturnsEveryCandidateAndPutsTheCertainTierFirst()
         {
             var plain = AddGame("Redout Space Legend");
             var gold = AddGame("Redout Space Legend Gold");
@@ -363,11 +365,55 @@ namespace PlayniteVRMods.Tests.Unit
 
             var suggestions = _service.FindSuggestedGames(entry);
 
-            Assert.That(suggestions, Has.Count.EqualTo(VrModTagService.SuggestionRowsPerEntry),
-                "a listing can name a family the library holds several entries of; the dialog must not become an inventory");
+            Assert.That(suggestions, Has.Count.EqualTo(2),
+                "both candidates the gates admit, neither cut: a listing can name a family the library "
+                + "holds several entries of, and the person reviewing it says which");
             Assert.That(suggestions[0].Kind, Is.EqualTo(TokenRunKind.SameProduct),
                 "re-release wording first: the tier a person can accept without reading");
             Assert.That(suggestions[0].Game.Name, Is.EqualTo("Redout Space Legend Deluxe Edition"));
+        }
+
+        /// <summary>
+        /// The no-cap rule stated as a number, because "show them all" is only testable as one. The fixture
+        /// is a listing whose library holds four copies of one product: one carries re-release wording the
+        /// token rules read as the same product, three carry title wording they will not assert. The cap that
+        /// used to end the search showed a person two of the four. Measured order on this fixture: Deluxe
+        /// Edition (SameProduct tier, 2 words over, 0.40), Eternity (1 over, 0.53), Collector Pack (2 over,
+        /// 0.40), Year Of The Wolf (4 over, 0.37) — the tier and the leftover counts, not the numbers a
+        /// person sees in the Score column.
+        /// </summary>
+        [Test]
+        public void FindSuggestedGames_AFamilyOfFourCandidatesIsFourRowsNotTwo()
+        {
+            AddGame("Alpha Beta Deluxe Edition");
+            AddGame("Alpha Beta Eternity");
+            AddGame("Alpha Beta Collector Pack");
+            AddGame("Alpha Beta Year Of The Wolf");
+            var parser = RegisterSource(new VrModEntry { GameName = "Alpha Beta", Category = "UEVR" });
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            var entry = FindEntry(parser, "Alpha Beta");
+            Assert.That(_service.FindGamesByIndex(entry), Is.Empty,
+                "none of these four is wording the name rules assert, which is why all four are rows");
+
+            var suggestions = _service.FindSuggestedGames(entry);
+
+            Assert.That(suggestions, Has.Count.EqualTo(4), "the candidate list is not cut to two (task 213)");
+            Assert.That(suggestions.Select(s => s.Game.Name), Is.EquivalentTo(new[]
+            {
+                "Alpha Beta Eternity", "Alpha Beta Collector Pack",
+                "Alpha Beta Deluxe Edition", "Alpha Beta Year Of The Wolf",
+            }));
+            Assert.That(suggestions.Select(s => s.Kind), Is.EqualTo(new[]
+            {
+                TokenRunKind.SameProduct, TokenRunKind.NeedsALook, TokenRunKind.NeedsALook, TokenRunKind.NeedsALook,
+            }), "re-release wording heads the list: the tier a person can accept without reading");
+            Assert.That(suggestions[0].Game.Name, Is.EqualTo("Alpha Beta Deluxe Edition"),
+                "the tier outranks a smaller leftover count and a higher displayed score: 'Eternity' leaves one word over and scores 0.53 against 0.40, and is still second");
+            Assert.That(suggestions.Skip(1).Select(s => s.LeftoverTokenCount), Is.EqualTo(new[] { 1, 2, 4 }),
+                "inside one tier the tighter claim on the pair comes first, whatever the Score column shows");
+            Assert.That(suggestions[3].Game.Name, Is.EqualTo("Alpha Beta Year Of The Wolf"),
+                "the weakest reading is still a row: it is last, and that is what last is for");
         }
 
         /// <summary>
@@ -511,7 +557,7 @@ namespace PlayniteVRMods.Tests.Unit
                 "0.42 of ten as whole strings: the name rules cannot assert this pair, which is why it is a review row");
 
             var suggestions = _service.FindSuggestedGames(entry);
-            Assert.That(suggestions, Has.Count.EqualTo(VrModTagService.SuggestionRowsPerEntry),
+            Assert.That(suggestions, Has.Count.EqualTo(2),
                 "the rarer word that named nothing must not end the search");
             Assert.That(suggestions.Select(s => s.Game.Id), Is.EquivalentTo(new[] { first.Id, second.Id }));
             foreach (var suggestion in suggestions)
@@ -575,7 +621,7 @@ namespace PlayniteVRMods.Tests.Unit
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var suggestions = _service.FindSuggestedGames(FindEntry(parser, "Alpha Beta Gamma"));
-            Assert.That(suggestions, Has.Count.EqualTo(VrModTagService.SuggestionRowsPerEntry));
+            Assert.That(suggestions, Has.Count.EqualTo(2));
             Assert.That(suggestions[0].Game.Id, Is.EqualTo(extendedGame.Id),
                 "three shared words beat two, even though the whole-name score says the opposite");
             Assert.That(suggestions[0].SharedTokenCount, Is.EqualTo(3));
@@ -610,12 +656,42 @@ namespace PlayniteVRMods.Tests.Unit
             Assert.That(row.Status, Is.EqualTo(MatchDecision.Pending));
             Assert.That(row.DisplayStatusText, Is.EqualTo("Suggested"));
             Assert.That(row.ReasonTooltip, Is.Not.Null.And.Not.Empty);
+            Assert.That(row.CandidateTotal, Is.EqualTo(1), "this listing named one candidate");
+            Assert.That(row.CandidateRank, Is.EqualTo(1));
             Assert.That(row.TagsChanged, Is.False);
 
             // An ordinary match row is not labelled Suggested and carries no reason.
             var ordinary = rows.Single(r => !r.IsSuggestion && r.PlayniteGame.Id == skyrim.Id);
             Assert.That(ordinary.DisplayStatusText, Is.Not.EqualTo("Suggested"));
             Assert.That(ordinary.ReasonTooltip, Is.Null);
+        }
+
+        /// <summary>
+        /// A listing that names a family puts every candidate in the dialog, and the rank the search put
+        /// them in travels with the row. The grid sorts rows by game name, so the evidence order is not
+        /// the order a person sees them in — without the rank in the tooltip, several rows of one listing
+        /// cannot be told apart by how sure the rules were.
+        /// </summary>
+        [Test]
+        public void BuildReviewMatchesFromCache_CarriesTheEvidenceRankOfEachCandidateOnItsRow()
+        {
+            AddGame("Alpha Beta Eternity");
+            AddGame("Alpha Beta Year Of The Wolf");
+            var parser = RegisterSource(new VrModEntry { GameName = "Alpha Beta", Category = "UEVR" });
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            var rows = _service.BuildReviewMatchesFromCache();
+            Assert.That(rows, Is.Not.Null);
+            var candidates = rows!.Where(r => r.IsSuggestion).OrderBy(r => r.CandidateRank).ToList();
+            Assert.That(candidates, Has.Count.EqualTo(2));
+            Assert.That(candidates.Select(r => r.CandidateRank), Is.EqualTo(new[] { 1, 2 }));
+            foreach (var candidate in candidates)
+            {
+                Assert.That(candidate.CandidateTotal, Is.EqualTo(2));
+                Assert.That(candidate.ReasonTooltip, Does.Contain($"candidate {candidate.CandidateRank} of 2"));
+            }
+            Assert.That(candidates[0].PlayniteGame.Name, Is.EqualTo("Alpha Beta Eternity"),
+                "rank 1 is the pairing the evidence puts first, not the first row the grid happens to show");
         }
 
         /// <summary>

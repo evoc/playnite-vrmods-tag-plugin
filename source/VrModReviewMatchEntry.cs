@@ -225,6 +225,21 @@ namespace Playnite.VRMods
         public bool IsSuggestion { get; set; }
 
         /// <summary>
+        /// Where this row sits in its listing's candidate list, 1-based: 1 is the pairing the evidence
+        /// puts first (<see cref="VrModTagService.FindSuggestedGames"/> ranks by App-ID agreement, then
+        /// verdict, then how much of both names the shared words explain). 0 on a row that is not a
+        /// suggestion. Set once, where the rows are built, and never changed by a decision — the rank
+        /// reports what the search concluded, not what a person did with it.
+        /// </summary>
+        public int CandidateRank { get; internal set; }
+
+        /// <summary>
+        /// How many candidates the search admitted for this listing, so <see cref="CandidateRank"/>
+        /// reads as "2 of 5" instead of a bare number. 0 on a row that is not a suggestion.
+        /// </summary>
+        public int CandidateTotal { get; internal set; }
+
+        /// <summary>
         /// Why the pairing is being shown, in one line, naming the words left over on each side of the
         /// name comparison. Empty on an ordinary match row. Shown as the status cell's tooltip; the row
         /// exists precisely because the similarity number in <see cref="Score"/> does not explain it.
@@ -235,9 +250,21 @@ namespace Playnite.VRMods
         /// The status cell's tooltip: <see cref="Reason"/> on a suggestion row, null on an ordinary
         /// match row (WPF shows no tooltip for a null value, and an empty one would render an empty
         /// box). Without it a "Suggested" row is a grey word with no way to find out what was
-        /// suspected about it.
+        /// suspected about it. When the listing produced several candidates the rank leads it — a sorted
+        /// grid puts those rows wherever their game names sort, so the search's order is otherwise
+        /// invisible to the person reading them.
         /// </summary>
-        public string? ReasonTooltip => string.IsNullOrEmpty(Reason) ? null : Reason;
+        public string? ReasonTooltip
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(Reason))
+                    return null;
+                return CandidateTotal > 1 && CandidateRank > 0
+                    ? $"candidate {CandidateRank} of {CandidateTotal} for this listing \u2014 {Reason}"
+                    : Reason;
+            }
+        }
 
         /// <summary>
         /// Sort rank for the decision status, in review priority order: Pending (0) first,

@@ -115,15 +115,16 @@
             <Button DockPanel.Dock="Left" Content="Reset all decisions"
                     ToolTip="Clear every stored decision so all matches are reviewed again."
                     Click="ResetAllDecisions_Click" Padding="12,4" />
-            <!-- Bulk actions operate on the data (each row's Status), not on the controls:
-                 the selection when the user has selected one or more rows, otherwise every
-                 match. The labels are updated in the SelectionChanged handler. -->
+            <!-- Bulk actions operate on the data (each row's Status), not on the controls: the visible
+                 selection when rows are selected, otherwise the rows the filters are showing. A row a
+                 filter hides is never touched, and the caption carries the counts - "Reject 12 shown
+                 (118 keep their status)" - recomputed by UpdateBulkButtons in the code-behind. -->
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="AcceptButton" Content="Accept All" Click="AcceptButton_Click"
-                        ToolTip="Accept the selected rows (or every match if none are selected). Alt+A"
+                        ToolTip="Accept the rows the filters are showing (Alt+A); the caption counts them. Accepted pairs are tagged on their game when you Save, and won't be offered again."
                         Margin="0,0,8,0" Padding="12,4" />
                 <Button x:Name="RejectButton" Content="Reject All" Click="RejectButton_Click"
-                        ToolTip="Reject the selected rows (or every match if none are selected). Alt+R"
+                        ToolTip="Reject the rows the filters are showing (Alt+R); the caption counts them. Rejected pairs won't be offered again; use Reset all decisions to undo."
                         Margin="0,0,8,0" Padding="12,4" />
                 <Button Content="Save" Click="Save_Click" ToolTip="Save (Ctrl+S)"
                         Margin="0,0,8,0" Padding="16,4" Background="{DynamicResource NormalBrush}" />
@@ -194,7 +195,7 @@
                             <Run FontWeight="SemiBold">Exact matches</Run> (identical names, score 1.00) are accepted by
                              default; a shared Steam App ID scores 1.00 but stays <Run FontWeight="SemiBold">Pending</Run> until you decide; fuzzy matches start as "Pending".
                             <LineBreak/>
-                            <Run FontWeight="SemiBold">Suggested</Run> is a candidate game the matching rules found but refuse to call a match — hover the status cell to see why (which words agree, which are left over). Accept it to make the pairing stick; every later scan then matches that listing to that game whatever either is called.
+                            <Run FontWeight="SemiBold">Suggested</Run> is a candidate game the matching rules found but refuse to call a match — hover the status cell to see why (which words agree, which are left over). Accept it to make the pairing stick; every later scan then matches that listing to that game whatever either is called. The same tooltip places that candidate in the ranked set (candidate 3 of 8).
                             <LineBreak/>
                             <Run FontWeight="SemiBold">Status</Run>: "Saved" / "New" (accepted), "Rejected" / "Rejected (new)", or "Pending". Italic means it is not yet saved to the library.
                             <LineBreak/>
@@ -204,11 +205,11 @@
                             <LineBreak/>
                             <Run FontWeight="SemiBold">Status</Run> (the "Status…" button) filters rows by status: tick a status to include it (multi-select); "Pending only" for a quick single-status view.
                             <LineBreak/>
-                            <Run FontWeight="SemiBold">Select rows</Run> to scope Accept/Reject to just those; with no selection the buttons act on all matches.
+                            <Run FontWeight="SemiBold">Select rows</Run> to scope Accept/Reject to just those; with no selection the buttons act on the rows the filters are showing, and the caption counts them. Rows a filter hides keep the status they already have.
                             <LineBreak/>
                             <Run FontWeight="SemiBold">Right-click a row</Run> for a quick Accept / Reject / Set to Pending menu.
                             <LineBreak/>
-                            <Run FontWeight="SemiBold">Keyboard</Run>: Alt+F focuses the filter, Alt+T opens the time window, Alt+S the status menu, Alt+C the columns menu, Alt+H this help, and Alt+A / Alt+R accept / reject directly (the selection, or every match). With the list focused, Enter accepts, R rejects, and P sets the row to Pending. Ctrl+S saves.
+                            <Run FontWeight="SemiBold">Keyboard</Run>: Alt+F focuses the filter, Alt+T opens the time window, Alt+S the status menu, Alt+C the columns menu, Alt+H this help, and Alt+A / Alt+R accept / reject directly (the visible selection, or every row the filters are showing). With the list focused, Enter accepts, R rejects, and P sets the row to Pending. Ctrl+S saves.
                             <LineBreak/>
                             <Run FontWeight="SemiBold">Reset all decisions</Run> (bottom-left) clears every decision so all matches are reviewed again.
                         </TextBlock>

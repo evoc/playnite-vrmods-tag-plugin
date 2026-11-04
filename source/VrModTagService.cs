@@ -80,13 +80,6 @@ namespace Playnite.VRMods
         /// </summary>
         internal const int SuggestionPostingCap = 40;
 
-        /// <summary>
-        /// How many suggestion rows one listing may put in front of a person per review pass. A
-        /// listing can name a family the library holds several entries of; showing every one turns a
-        /// review into an inventory. Candidates past the cap are counted in the log, not hidden.
-        /// </summary>
-        internal const int SuggestionRowsPerEntry = 2;
-
         private readonly ConcurrentDictionary<string, (DateTime Fetched, List<VrModEntry> Entries)> _sourceCache = new();
         private bool _isDisposed;
 
@@ -1299,20 +1292,22 @@ namespace Playnite.VRMods
         ///   brought back to ask again.</description></item>
         /// </list>
         ///
-        /// The search walks the listing's words by posting count in GROUPS: a word carried by the same
-        /// number of library games as another word of the same listing is equally good evidence about
-        /// this listing, so every word of one rarity is searched before the next rarity is tried, and a
-        /// group that names a product ends the search. Candidates gathered from several words of one
-        /// group are then ranked by App-ID agreement, then verdict, then how much of both names their
-        /// shared run explains — never by which word reached them, because a posting count is a fact
-        /// about the library and not about the pair.
+        /// The search walks the listing's words by posting count, rarest first and in GROUPS: a word
+        /// carried by the same number of library games as another word of the same listing is equally
+        /// good evidence about this listing, so every word of one rarity is searched before the next
+        /// rarity is tried, and no group ends the walk. Candidates gathered from several words are then
+        /// ranked by App-ID agreement, then verdict, then how much of both names their shared run
+        /// explains — never by which word reached them, because a posting count is a fact about the
+        /// library and not about the pair.
         ///
         /// Nothing here is applied: no tag, no link, no decision. A suggestion becomes a match only
         /// through a saved decision, which the first block of <see cref="FindGamesByIndex"/> then
         /// carries on every later scan.
         /// </summary>
         /// <param name="entry">A catalog listing that found no match by name or App ID.</param>
-        /// <returns>Ranked candidates, at most <see cref="SuggestionRowsPerEntry"/>; empty when the library has nothing to say.</returns>
+        /// <returns>Every candidate the gates admit, ranked strongest first. The list is not cut to a
+        /// fixed number (see the walk below): a candidate the rules suspect is a question a person sees.
+        /// Empty when the library has nothing to say.</returns>
         internal List<VrModMatchSuggestion> FindSuggestedGames(VrModEntry entry)
         {
             var suggestions = new List<VrModMatchSuggestion>();
@@ -1343,20 +1338,29 @@ namespace Playnite.VRMods
             // quirk of one listing: measured on 1 348 listing names against this library, 6 pairings
             // disappeared when a normalizer change moved one word's posting count by one.
             //
-            // So the search takes the first word whose postings survive the token-run rules below, and
-            // a rarer word that names nothing does not end it. Nothing is suggested only when the
-            // library shares not one word with the listing, or every shared word it has is too common
-            // to be a candidate set.
+            // So every word under the cap is walked, rarest first, and a rarer word that names nothing
+            // does not end it. Nothing is suggested only when the library shares not one word with the
+            // listing, or every shared word it has is too common to be a candidate set.
             //
-            // The unit of that walk is a GROUP of words with the same posting count, not one word: two
-            // words of equal rarity are equally good evidence about this listing, so the order the
-            // listing happened to write them in must not decide which two rows a person is offered.
-            // 44 of the 1 348 live listing names tie for their rarest library-present word. Searching
-            // the whole group costs 57 extra CompareTokenRuns calls out of 7 569 (+0.8%) and adds one
-            // candidate; searching every shared word regardless of rarity would cost 1 319 (+17%) for
-            // three, and those three are word coincidences ('The Walking Dead: Onslaught VR' against
-            // 'Dead by Daylight'), so rarity stays the thing that keeps a candidate set about the
-            // product the listing names. Measured in tools/Stats202 (see its README).
+            // The walk still moves in GROUPS of equal posting count, because a posting count is a fact
+            // about the whole library: two words of one listing carried by the same number of games are
+            // equally good evidence about this listing, so the order the listing happened to write them
+            // in must not decide which candidates it is offered, or what their rank says. 44 of the
+            // 1 348 live listing names tie for their rarest library-present word; searching the whole
+            // group costs 57 extra CompareTokenRuns calls out of 7 569 (+0.8%) and adds one candidate.
+            //
+            // What used to end the walk was a group whose postings survived the gates and named
+            // something: the first candidates found were assumed to be the whole answer. Measured in
+            // tools/Stats202 against this library (1 348 listings x 226 games), stopping at the first
+            // group that named anything cost 7 626 CompareTokenRuns and admitted 152 candidates;
+            // walking every shared word under the cap costs 8 888 (+16.6%) and admits 156. The stop hid
+            // those four — word coincidences, 'The Walking Dead: Onslaught VR' against 'Dead by
+            // Daylight' — and it hid what the 919 of 1 348 listings that stopped inside their first
+            // group would have been shown: 'Morrowind GOTY Edition' reached TES3: Morrowind fourth,
+            // behind three Elder Scrolls records, and that pairing was never offered to anybody.
+            // Everything the gates admit is now a row, ranked, with its rank reported on it, because a
+            // suspect candidate is cheaper for a person to read and dismiss than a decision that comes
+            // back next scan once the pair the rules stopped at has been dismissed.
             var searchableTokens = new List<(string Token, int Posting)>();
             string? rarestToken = null;
             var rarestPosting = int.MaxValue;
@@ -1398,8 +1402,8 @@ namespace Playnite.VRMods
             // here so the rule is a property of the method rather than of how it happens to be called.
             var alreadyMatched = new HashSet<Guid>(FindGamesByIndex(entry).Select(g => g.Id));
             string? lastSearchedToken = null;
-            // Rarest group first (GroupBy yields groups in the order their rarity first appears, and
-            // orderedTokens is sorted by posting count).
+            // Rarest group first, and every group is searched (GroupBy yields groups in the order their
+            // rarity first appears, and orderedTokens is sorted by posting count).
             foreach (var rarityGroup in orderedTokens.GroupBy(t => t.Posting))
             {
                 foreach (var tokenGroup in rarityGroup)
@@ -1455,11 +1459,6 @@ namespace Playnite.VRMods
                     }
                 }
 
-                // A rarity group that named a product wins the search even when a rarer word existed:
-                // every word of that group has now had its turn, and the more common words below it
-                // describe the library, not this listing.
-                if (candidates.Count > 0)
-                    break;
             }
 
             if (candidates.Count == 0)
@@ -1488,10 +1487,10 @@ namespace Playnite.VRMods
                 .ThenBy(c => c.Game.Name, StringComparer.CurrentCultureIgnoreCase)
                 .ToList();
 
-            if (ranked.Count > SuggestionRowsPerEntry)
+            if (ranked.Count > 1)
             {
                 _logger.Debug($"VRMod Tag Service: '{SafeLogText(entry.GameName)}' has {ranked.Count} candidate "
-                    + $"game(s); showing the first {SuggestionRowsPerEntry}.");
+                    + "game(s); every one is a review row, ranked strongest first.");
             }
             if (decidedCount > 0)
             {
@@ -1499,7 +1498,7 @@ namespace Playnite.VRMods
                     + "somebody already decided.");
             }
 
-            suggestions.AddRange(ranked.Take(SuggestionRowsPerEntry));
+            suggestions.AddRange(ranked);
             return suggestions;
         }
 
@@ -1655,18 +1654,25 @@ namespace Playnite.VRMods
                         // No match — but the name rules may still have something to report. Always
                         // collected: LogScanSummary tells a user who never opens a dialog that these
                         // pairings exist. Only the review-everything pass turns them into rows, since
-                        // the pending-match dialog is a dialog about matches and its Bulk Accept acts
-                        // on every row in it — a row the rules merely suspect does not belong under a
-                        // button that means "this is the game".
-                        foreach (var suggestion in FindSuggestedGames(entry))
+                        // the pending-match dialog is a dialog about matches and its Bulk buttons act
+                        // on every row it is showing — a row the rules merely suspect does not belong
+                        // under a button that means "this is the game". Rank/total are carried on the
+                        // row so a listing with several candidates says which pairing the evidence puts
+                        // first (the search's order is not visible in a sorted grid).
+                        var candidateRows = FindSuggestedGames(entry);
+                        for (var candidateIndex = 0; candidateIndex < candidateRows.Count; candidateIndex++)
                         {
+                            var suggestion = candidateRows[candidateIndex];
                             _lastSuggestions ??= new List<(string SourceName, string EntryName, string GameName, string Reason)>();
                             _lastSuggestions.Add((entry.SourceId ?? "unknown", entry.GameName,
                                 suggestion.Game.Name, suggestion.Reason));
                             if (reviewAll)
                             {
-                                reviewMatches.Add(MakeReviewMatch(sourceId, entry, suggestion.Game,
-                                    suggestion.DisplayScore, MatchDecision.Pending, suggestion.Reason));
+                                var row = MakeReviewMatch(sourceId, entry, suggestion.Game,
+                                    suggestion.DisplayScore, MatchDecision.Pending, suggestion.Reason);
+                                row.CandidateRank = candidateIndex + 1;
+                                row.CandidateTotal = candidateRows.Count;
+                                reviewMatches.Add(row);
                             }
                         }
                         continue;
@@ -1887,13 +1893,19 @@ namespace Playnite.VRMods
                     if (games.Count == 0)
                     {
                         // The same candidates a full scan would report: this dialog is where a
-                        // suggestion is meant to be read and decided.
-                        foreach (var suggestion in FindSuggestedGames(entry))
+                        // suggestion is meant to be read and decided. Ranked, and the rank is carried
+                        // on the row (see the scan path for why).
+                        var candidateRows = FindSuggestedGames(entry);
+                        for (var candidateIndex = 0; candidateIndex < candidateRows.Count; candidateIndex++)
                         {
+                            var suggestion = candidateRows[candidateIndex];
                             _lastSuggestions ??= new List<(string SourceName, string EntryName, string GameName, string Reason)>();
                             _lastSuggestions.Add((sourceId, entry.GameName, suggestion.Game.Name, suggestion.Reason));
-                            matches.Add(MakeReviewMatch(sourceId, entry, suggestion.Game,
-                                suggestion.DisplayScore, MatchDecision.Pending, suggestion.Reason));
+                            var row = MakeReviewMatch(sourceId, entry, suggestion.Game,
+                                suggestion.DisplayScore, MatchDecision.Pending, suggestion.Reason);
+                            row.CandidateRank = candidateIndex + 1;
+                            row.CandidateTotal = candidateRows.Count;
+                            matches.Add(row);
                         }
                         continue;
                     }

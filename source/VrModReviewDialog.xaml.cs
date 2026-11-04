@@ -130,8 +130,9 @@ namespace Playnite.VRMods
             RegisterColumns();
             ApplyColumnHeaders(null, null);
             UpdateEmptyHint();
+            UpdateBulkButtons();
             // Capture "now" once at construction so the time-filter window is stable for the
-            // life of the dialog (it doesn't drift as the user browses).
+            // lifetime of the dialog, not slide forward as real time passes.
             _filterNowUtc = DateTime.UtcNow;
             Closed += OnWindowClosed;
             // Playnite dims its own windows that own a child window (HasChildWindow -> Opacity 0.4)
@@ -839,20 +840,115 @@ namespace Playnite.VRMods
         }
 
         /// <summary>
-        /// The rows the bulk Accept/Reject buttons act on: the DataGrid's selection when the
-        /// user has selected one or more rows, otherwise every match (the "…All" behavior).
+        /// The rows the bulk Accept/Reject buttons act on: the selection when the user has selected rows
+        /// the filters are showing, otherwise the rows the filters are showing. A row a filter is hiding
+        /// is never a target (task 212, owner decision 1-a): what is on screen is what changes, and the
+        /// caption says how many rows that means (<see cref="BulkButtonLabel"/>). A row selected before a
+        /// filter hid it goes out with it - the alternative is deciding a row nobody is looking at.
+        /// Shared by the bulk buttons, the right-click menu items and the status double-click; Alt+A and
+        /// Alt+R fire the buttons themselves, so they follow the same rule.
         /// </summary>
         private List<VrModReviewMatchEntry> GetBulkTargets()
+            => BulkTargets(MatchesDataGrid.SelectedItems.OfType<VrModReviewMatchEntry>(), VisibleMatchRows());
+
+        /// <summary>
+        /// Pure core of <see cref="GetBulkTargets"/>, testable without a DataGrid: the selected rows that
+        /// are visible, or every visible row when nothing is selected.
+        /// </summary>
+        /// <param name="selectedRows">The grid's selected entries (empty when nothing is selected).</param>
+        /// <param name="visibleRows">The rows the filters are showing, in display order.</param>
+        /// <returns>The rows a bulk action will change.</returns>
+        internal static List<VrModReviewMatchEntry> BulkTargets(
+            IEnumerable<VrModReviewMatchEntry> selectedRows, List<VrModReviewMatchEntry> visibleRows)
         {
-            return MatchesDataGrid.SelectedItems.Count > 0
-                ? MatchesDataGrid.SelectedItems.OfType<VrModReviewMatchEntry>().ToList()
-                : _matches;
+            var selected = selectedRows as IList<VrModReviewMatchEntry> ?? selectedRows.ToList();
+            if (selected.Count == 0)
+                return visibleRows;
+            var visible = new HashSet<VrModReviewMatchEntry>(visibleRows);
+            return selected.Where(visible.Contains).ToList();
         }
 
         /// <summary>
-        /// Sets <see cref="VrModReviewMatchEntry.Status"/> on the bulk targets (the selection when
-        /// present, otherwise every match) to the given decision. Data-driven: the Status text,
-        /// its color/italic, and the "Saved at" cell all refresh via the entry's
+        /// Every row the grid is showing right now, in display order: the same set the filter box, the
+        /// status menu, the time window and the "Changed only" tick have narrowed the list to. Enumerating
+        /// the view walks it in its current sort order; the whole model stays where it is.
+        /// </summary>
+        private List<VrModReviewMatchEntry> VisibleMatchRows()
+            => _matchesView is null ? _matches : _matchesView.OfType<VrModReviewMatchEntry>().ToList();
+
+        /// <summary>
+        /// Puts the number of rows a bulk action means into its caption (task 212, owner decision 2-b):
+        /// plain wording while the filters are hiding nothing, and a count naming both halves the moment
+        /// they are not. The hidden half says those rows keep their status rather than merely leaving them
+        /// out of the number: a fixed "…All" over a filtered grid is a button whose meaning is whatever
+        /// the filter happens to allow, which is the accident this task removes.
+        /// </summary>
+        /// <param name="verb">"Accept" or "Reject".</param>
+        /// <param name="selectedCount">Selected rows that are also visible.</param>
+        /// <param name="visibleCount">Rows the filters are showing.</param>
+        /// <param name="hiddenCount">Rows the filters are hiding.</param>
+        /// <returns>The button caption.</returns>
+        internal static string BulkButtonLabel(string verb, int selectedCount, int visibleCount, int hiddenCount)
+        {
+            if (selectedCount > 0)
+                return verb + " Selected";
+            if (visibleCount == 0)
+                return verb + " nothing";
+            if (hiddenCount > 0)
+                return $"{verb} {visibleCount} shown \u00b7 {hiddenCount} keep their status";
+            return verb + " All";
+        }
+
+        /// <summary>
+        /// The bulk button's tooltip: what changes and what does not, spelled out. The caption carries the
+        /// numbers; the tooltip is where "and the rest are untouched" is unambiguous, including the case
+        /// the caption cannot show (a selection, where the count would fight with "Selected").
+        /// </summary>
+        /// <param name="verb">"Accept" or "Reject".</param>
+        /// <param name="accelerator">The keyboard shortcut to keep in the tooltip ("Alt+A").</param>
+        /// <param name="selectedCount">Selected rows that are also visible.</param>
+        /// <param name="visibleCount">Rows the filters are showing.</param>
+        /// <param name="hiddenCount">Rows the filters are hiding.</param>
+        /// <returns>The tooltip text.</returns>
+        internal static string BulkButtonTooltip(
+            string verb, string accelerator, int selectedCount, int visibleCount, int hiddenCount)
+        {
+            if (selectedCount > 0)
+                return $"{verb} the {selectedCount} selected {RowWord(selectedCount)}. No other row changes. {accelerator}";
+            if (visibleCount == 0)
+                return hiddenCount > 0
+                    ? $"{verb} nothing: the filters are hiding all {hiddenCount} {RowWord(hiddenCount)}. They keep the status they already have. {accelerator}"
+                    : $"{verb} nothing: there are no rows. {accelerator}";
+            if (hiddenCount > 0)
+                return $"{verb} the {visibleCount} {RowWord(visibleCount)} the filters are showing. Hidden rows ({hiddenCount}) keep the status they already have. {accelerator}";
+            return $"{verb} all {visibleCount} {RowWord(visibleCount)} shown. {accelerator}";
+        }
+
+        private static string RowWord(int count) => count == 1 ? "row" : "rows";
+
+        /// <summary>
+        /// Recomputes both bulk captions and tooltips from the rows the filters are showing. Call it
+        /// wherever that set changes: a selection, the filter text or time window (both land in
+        /// <see cref="OnFilterDebounceTick"/>), a status-filter change, the "Changed only" tick, and a
+        /// reset. It enumerates the view, which is what a filter change already costs.
+        /// </summary>
+        private void UpdateBulkButtons()
+        {
+            var visible = VisibleMatchRows();
+            var visibleSet = new HashSet<VrModReviewMatchEntry>(visible);
+            var selectedCount = MatchesDataGrid.SelectedItems.OfType<VrModReviewMatchEntry>().Count(visibleSet.Contains);
+            var hiddenCount = _matches.Count - visible.Count;
+
+            AcceptButton.Content = BulkButtonLabel("Accept", selectedCount, visible.Count, hiddenCount);
+            RejectButton.Content = BulkButtonLabel("Reject", selectedCount, visible.Count, hiddenCount);
+            AcceptButton.ToolTip = BulkButtonTooltip("Accept", "Alt+A", selectedCount, visible.Count, hiddenCount);
+            RejectButton.ToolTip = BulkButtonTooltip("Reject", "Alt+R", selectedCount, visible.Count, hiddenCount);
+        }
+
+        /// <summary>
+        /// Sets <see cref="VrModReviewMatchEntry.Status"/> on the bulk targets (the visible selection
+        /// when there is one, otherwise every visible row) to the given decision. Data-driven: the Status
+        /// text, its color/italic, and the "Saved at" cell all refresh via the entry's
         /// <see cref="INotifyPropertyChanged"/> notifications. Shared by the bulk buttons, the
         /// right-click context-menu items, and the status double-click.
         /// </summary>
@@ -1299,6 +1395,7 @@ namespace Playnite.VRMods
             UpdateStatusButton();
             _matchesView?.Refresh();
             UpdateEmptyHint();
+            UpdateBulkButtons();
         }
 
         /// <summary>
@@ -1349,6 +1446,7 @@ namespace Playnite.VRMods
             _plugin.TagService.Settings.ClearAllDecisions();
             _plugin.SavePluginSettings(_plugin.TagService.Settings);
             _matchesView?.Refresh();
+            UpdateBulkButtons();
 
             if (choice == ResetChoice.ResetAndRemoveTags)
             {
@@ -1508,16 +1606,15 @@ namespace Playnite.VRMods
         }
 
         /// <summary>
-        /// Keeps the bulk button labels in sync with the selection: "…All" when nothing is
-        /// selected, "…Selected" when one or more rows are selected.
+        /// Keeps the bulk button captions and tooltips in step with the selection: "…Selected" names the
+        /// selection, and the counts describe the rows the filters are showing (see
+        /// <see cref="UpdateBulkButtons"/>).
         /// </summary>
         /// <param name="sender">The matches DataGrid.</param>
         /// <param name="e">Selection-changed event arguments.</param>
         private void OnSelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            var hasSelection = MatchesDataGrid.SelectedItems.Count > 0;
-            AcceptButton.Content = hasSelection ? "Accept Selected" : "Accept All";
-            RejectButton.Content = hasSelection ? "Reject Selected" : "Reject All";
+            UpdateBulkButtons();
         }
 
         /// <summary>
@@ -1779,6 +1876,7 @@ namespace Playnite.VRMods
             _changedOnly = ChangedOnlyCheckBox.IsChecked == true;
             _matchesView?.Refresh();
             UpdateEmptyHint();
+            UpdateBulkButtons();
         }
 
         /// <summary>
@@ -1792,6 +1890,7 @@ namespace Playnite.VRMods
             _filterText = FilterBox.Text;
             _matchesView?.Refresh();
             UpdateEmptyHint();
+            UpdateBulkButtons();
         }
 
         /// <summary>
@@ -2042,10 +2141,10 @@ namespace Playnite.VRMods
         /// <summary>Alt+H: toggle the Help popup.</summary>
         Help,
 
-        /// <summary>Alt+A: Accept (the selection, or every match when none is selected).</summary>
+        /// <summary>Alt+A: Accept (the visible selection, or every row the filters are showing).</summary>
         AcceptAll,
 
-        /// <summary>Alt+R: Reject (the selection, or every match when none is selected).</summary>
+        /// <summary>Alt+R: Reject (the visible selection, or every row the filters are showing).</summary>
         RejectAll,
     }
 
