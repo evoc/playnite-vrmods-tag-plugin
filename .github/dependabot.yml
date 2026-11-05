@@ -7,11 +7,24 @@
 #     to main and can tamper with the shipped .pext;
 #   - a vulnerable NuGet dependency (System.Text.Json, PlayniteSDK) is code the
 #     plugin executes on the user's machine while handling hostile input.
-# Dependabot is what keeps the SHA pins below from silently rotting.
+# Dependabot is what keeps the SHA pins in .github/workflows from silently
+# rotting.
 #
 # Pin style on purpose: majors are NOT auto-bumped. A major version of a
 # dependency or an Action is a behavioural change and gets a human decision
 # (dependabot opens no PR; the changelog is read by hand instead).
+#
+# What that refusal does NOT cover, stated because the difference decides
+# whether this file protects anything: an `ignore` rule that names
+# `update-types` filters version updates only - GitHub's own configuration
+# reference says "update-types only affects *version* updates, not *security
+# updates*". So the majors refusal below never silences an advisory: a
+# Dependabot security PR for an ignored dependency is still opened, still
+# reviewed by the CI job, still audited by the release job's
+# `dotnet list package --vulnerable` gate, and still needs a human to merge
+# it. A rule written the other way -
+# `ignore: - dependency-name: X` with no update-types - is what would swallow
+# the advisory too, and nothing here is written that way.
 version: 2
 
 updates:
@@ -21,14 +34,25 @@ updates:
     schedule:
       interval: "weekly"
       day: "monday"
-    # Commitlint lints every PR commit message, so Dependabot's commits have to
+    # The CI job lints every PR commit message, so Dependabot's commits have to
     # be Conventional too ("Bump X from Y to Z" alone would fail the gate).
     commit-message:
       prefix: "chore"
       include: "scope"
+    # Wait before opening a bump PR: a hijacked upstream Action release is
+    # usually caught by other reports inside a day or two.
+    #
+    # Only `default-days` here. GitHub's cooldown table states that
+    # `default-days` is "supported for all package managers listed, while
+    # `semver-major-days`, `semver-minor-days`, and `semver-patch-days` are
+    # supported only where indicated" - and for github-actions those three are
+    # marked not supported. Naming them is not ignored quietly: Dependabot's
+    # config validator rejects the file and says so per key
+    # ("The property '#/updates/.../cooldown/semver-minor-days' ... is not
+    # supported for the package ecosystem 'github-actions'"), which would leave
+    # this whole config inert.
     cooldown:
       default-days: 3
-      semver-minor-days: 7
     ignore:
       - update-types: ["version-update:semver-major"]
 
@@ -42,11 +66,51 @@ updates:
     commit-message:
       prefix: "fix"
       include: "scope"
-    # Wait before opening a bump PR: a hijacked upstream release is usually
-    # caught by other reports inside a day or two, and this plugin ships to
-    # users who have no way to see the change before it lands.
     cooldown:
       default-days: 3
       semver-minor-days: 7
+    ignore:
+      - update-types: ["version-update:semver-major"]
+      # PlayniteSDK is not a library this project consumes incidentally: it is
+      # the host the plugin is loaded into. Its version is a fact about the
+      # user's Playnite install, not a fact about this repo's build - the SDK
+      # assemblies are stripped out of the shipped .pext
+      # (tools/Build-Release.ps1 removes Playnite.dll,
+      # Playnite.Common.dll and Playnite.SDK.dll from the package), so bumping
+      # the reference cannot make the plugin run on a newer
+      # Playnite, and a bump that changes API shape would break the plugin at
+      # load time in a way no test in this repo can see. Every non-major bump is
+      # refused here: the SDK moves when a human moves their Playnite and reads
+      # what the SDK changed.
+      #
+      # update-types is what keeps this a refusal of *bumps* rather than a
+      # refusal of *security*: see the header. An advisory in PlayniteSDK would
+      # be suppressed by a bare `dependency-name` rule, and PlayniteSDK is one
+      # of the two packages whose code runs on hostile input.
+      - dependency-name: "PlayniteSDK"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+
+  # The test project's own packages. Left out of the original config, which
+  # meant the packages that run on the CI runner - Microsoft.NET.Test.Sdk and
+  # NUnit3TestAdapter drive the test host with this repo's workflow token - had
+  # no update path at all, while the shipped project's packages had one.
+  # Audit and CI gates cover both projects; a supply-chain rule that manages
+  # only one of them is half a rule.
+  - package-ecosystem: "nuget"
+    directory: "/tests"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    # A test-only dependency is not shipped to a user, so a minor bump here is
+    # a build risk rather than an install risk: a shorter wait than /source.
+    cooldown:
+      default-days: 3
+      semver-minor-days: 3
     ignore:
       - update-types: ["version-update:semver-major"]
