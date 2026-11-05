@@ -14,6 +14,9 @@ dist/
 *.user
 
 # Build/test artifacts (local working copies, not part of the repo)
+# The analyzer gate's build log: both workflows tee the build into this name,
+# so running the documented local command leaves it in the working tree.
+ca-analysis.log
 logs/
 scratch/
 **/*.db

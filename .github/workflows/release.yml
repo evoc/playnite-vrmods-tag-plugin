@@ -22,7 +22,30 @@
 # `contents: write` and packages what it produces into the .pext users install.
 # A SHA names the exact code that ran. Dependabot (.github/dependabot.yml) is
 # what keeps these pins current; the comments after each pin say which release
-# the SHA is, so a bump is reviewable as a diff instead of a magic number.
+# the SHA is, so a bump is reviewable as a diff instead of a magic number. The
+# SHA has to be the commit the tag points at: a tag can be an annotated tag
+# object with its own SHA (softprops/action-gh-release v3.0.3 is one, object
+# e598afbe... over commit efb35369...), and a tag-object pin is neither valid
+# in `uses:` nor fixed - it moves with the tag.
+#
+# Gate order is deliberate: every gate runs before this job writes anything, so
+# a release that fails a gate cannot leave a tag behind. The tag is the version,
+# so a tag pushed before the gates run has already consumed that version number,
+# names a commit that was never shipped, and becomes the base the NEXT release
+# computes its version and its notes from.
+#
+# Restore is locked (Directory.Build.props + the committed packages.lock.json
+# files): the package graph that ships is a reviewed file in this repo, not a
+# resolution the runner makes at release time. Measured here on SDK 8.0.427: a
+# csproj asking for a version the lock file does not name fails restore with
+# NU1004, and a lock file whose recorded content hash no longer matches the
+# package fails with NU1403 ("The package is different than the last restore").
+#
+# Git input is named, not assumed: no `fetch-depth: 0` (checkout documents that
+# as "all history for all branches and tags"), and no step puts an
+# event-provided ref name into a shell command. The history and tags this job
+# reads are fetched by explicit refspec, from a branch name checked against the
+# literal this file releases from.
 name: Release
 
 on:
@@ -47,22 +70,92 @@ jobs:
       group: release-main
       cancel-in-progress: false
     steps:
-      - name: "Checkout (full history: tags + commit messages)"
+      - name: "Checkout (the triggering commit only)"
         # actions/checkout v7.0.1
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
 
-      # actions/setup-dotnet v6.0.0
+      - name: "Fetch the history and tags this job reads, by named refspec"
+        # Why not `fetch-depth: 0`: checkout describes it as fetching "all
+        # history for all branches and tags", and everything this job decides -
+        # the version, the tag-scheme check, the release notes - is read out of
+        # git. Name the refs instead of widening the object store, and take the
+        # branch name from this file rather than from an event-provided variable
+        # (no step here reads GITHUB_REF/GITHUB_HEAD_REF; the name is validated
+        # against the literal `main` this workflow releases from, which also
+        # refuses a manual run started on a feature branch).
+        #
+        # Measured on git 2.56 with the same shape checkout performs (fetch one
+        # sha at depth 1, checkout it): a later `git fetch` of a named refspec
+        # WITHOUT a depth option does not deepen a shallow repo - HEAD stayed at
+        # 1 commit - while `--unshallow` on the named refspec does (1 -> 7
+        # commits), and afterwards the only refs in the repo are the ones named
+        # here. Tags are fetched as their own named refspec, which is what
+        # `git describe --tags --match v*` and the tag-scheme check below read.
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if ($env:REF_NAME -ne "main") {
+            throw "this workflow releases from main only, but it ran on " +
+                  "'$env:REF_NAME' - refusing to version a release off a " +
+                  "branch the tag rules do not count"
+          }
+          # --unshallow only where the clone is actually shallow: git refuses
+          # it on a complete repository ("--unshallow on a complete repository
+          # does not make sense"), and .git/shallow is what marks the shallow
+          # case a depth-limited fetch leaves behind.
+          $deepen = @()
+          if (Test-Path -LiteralPath '.git/shallow') {
+            $deepen = @('--unshallow')
+          }
+          git fetch --no-tags $deepen origin `
+            "+refs/heads/main:refs/remotes/origin/main"
+          git fetch origin "+refs/tags/*:refs/tags/*"
+          # Fail closed: every decision below (the version, the tag-scheme
+          # check, the notes range) reads history out of this clone, and a
+          # history that did not arrive does not report itself - it just makes
+          # `git describe` answer with nothing. Measured: an unknown id prints
+          # "fatal: bad object" to stderr while `git log` still exits 0.
+          git rev-parse --verify refs/remotes/origin/main 2>$null |
+            Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "origin/main is not in this clone: refusing to version a " +
+                  "release from history this job cannot read"
+          }
+
+      # actions/setup-dotnet v6.1.0 (was v6.0.0 / a98b5685...: upstream has
+      # since released v6.1.0, and an unmoved pin is how a pin quietly rots)
       - name: Setup .NET SDK (pinned in global.json)
-        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
+        with:
+          # The cache key is the content of the named lock files, so a changed
+          # package graph cannot reuse a cache - it gets a new key.
+          cache: true
+          cache-dependency-path: |
+            source/packages.lock.json
+            tests/packages.lock.json
 
       - name: Install GitVersion.Tool
         # Exact version, matching GitVersion.MsBuild in the csproj: a floating
         # `6.*` means the version a release got can change after the fact
         # (yesterday's build and today's rebuild of the same commit would not
         # even agree on what the version is).
-        run: dotnet tool install --global GitVersion.Tool --version 6.8.2
+        #
+        # Asserted, not requested: this step downloads and then runs a NuGet
+        # package, and `dotnet tool install` is not part of the project graph,
+        # so the package audit below never sees it. The check is that the
+        # version which actually landed is the version this file names.
+        shell: pwsh
+        run: |
+          dotnet tool install --global GitVersion.Tool --version 6.8.2
+          $installed = dotnet tool list --global | Out-String
+          if ($LASTEXITCODE -ne 0) { throw "tool list failed: $installed" }
+          if ($installed -notmatch 'GitVersion\.Tool\s+6\.8\.2') {
+            throw ("GitVersion.Tool 6.8.2 was requested but is not what " +
+                   "landed:`n$installed")
+          }
 
       - name: "Vulnerable packages (supply-chain gate)"
         # Fails the release if this project - or anything it pulls in - depends
@@ -82,30 +175,45 @@ jobs:
         # non-empty list stop the release. Both directions checked locally - the
         # plugin project passes from a deleted obj/, a project pinning
         # System.Text.RegularExpressions 4.3.0 fails with 3 findings.
+        # Both projects, not only the shipped one: the test packages are not in
+        # the .pext, but their code runs on this runner with this job's token
+        # (Microsoft.NET.Test.Sdk and NUnit3TestAdapter drive the test host), so
+        # an advisory in them is a compromise of the build, not of a plugin the
+        # user happens not to install.
         shell: pwsh
         run: |
-          $proj = "source/Playnite.VRMods.csproj"
-          dotnet restore $proj
-          $audit = dotnet list $proj package --vulnerable `
-            --include-transitive --format json | Out-String
-          if ($LASTEXITCODE -ne 0) { throw "package audit failed: $audit" }
-          $json = $audit | ConvertFrom-Json
-          # Fail closed: an audit that names no project is not a pass.
-          if (-not $json.projects) {
-            throw "audit named no project - refusing an unaudited release"
-          }
+          $projects = @(
+            "source/Playnite.VRMods.csproj",
+            "tests/Playnite.VRMods.Tests.csproj"
+          )
+          # Locked: what is judged here is the graph the committed lock files
+          # name, which is the same graph the build and the .pext then use.
+          dotnet restore Playnite.VRMods.sln --locked-mode
           $findings = @()
-          foreach ($p in $json.projects) {
-            foreach ($fw in @($p.frameworks)) {
-              # A clean project reports no frameworks section at all.
-              if (-not $fw) { continue }
-              $pkgs = @($fw.topLevelPackages)
-              $pkgs += @($fw.transitivePackages)
-              foreach ($pkg in $pkgs) {
-                foreach ($vuln in @($pkg.vulnerabilities)) {
-                  $line = $pkg.id + " " + $pkg.resolvedVersion
-                  $line += " [" + $vuln.severity + "] " + $vuln.advisoryurl
-                  $findings += $line
+          $audited = 0
+          foreach ($proj in $projects) {
+            $audit = dotnet list $proj package --vulnerable `
+              --include-transitive --format json | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "package audit failed: $audit" }
+            $json = $audit | ConvertFrom-Json
+            # Fail closed: an audit that names no project is not a pass.
+            if (-not $json.projects) {
+              throw "audit named no project for '${proj}' - refusing an " +
+                    "unaudited release"
+            }
+            $audited += $json.projects.Count
+            foreach ($p in $json.projects) {
+              foreach ($fw in @($p.frameworks)) {
+                # A clean project reports no frameworks section at all.
+                if (-not $fw) { continue }
+                $pkgs = @($fw.topLevelPackages)
+                $pkgs += @($fw.transitivePackages)
+                foreach ($pkg in $pkgs) {
+                  foreach ($vuln in @($pkg.vulnerabilities)) {
+                    $line = $pkg.id + " " + $pkg.resolvedVersion
+                    $line += " [" + $vuln.severity + "] " + $vuln.advisoryurl
+                    $findings += $line
+                  }
                 }
               }
             }
@@ -115,10 +223,64 @@ jobs:
             Write-Host "::error::vulnerable dependency ($($findings.Count))"
             exit 1
           }
-          Write-Host "No vulnerable packages in the dependency graph."
+          Write-Host ("No vulnerable packages across $audited audited " +
+                      "project framework entry(ies).")
+
+      - name: "Code analysis (gate: runs before the tag exists)"
+        # AGENTS.md requires a 0-warning build, and the plugin project turns the
+        # .NET analyzers on (net462 leaves them off by default). Neither
+        # `dotnet build` nor `dotnet test` fails on a warning, so the gate names
+        # them: any analyzer warning (": warning CA") stops the release.
+        # The build already runs every family; .editorconfig carries the
+        # families that were judged and excluded, each with its reason, so this
+        # step covers every family not excluded there (AGENTS.md, "Analyzers").
+        # Restore warnings (NU...) are out of scope - they come from third-party
+        # packages, not from this code.
+        #
+        # --no-restore: the audit step above already restored the solution in
+        # locked mode, and a gate that re-resolves is a gate on a graph other
+        # than the one that ships.
+        #
+        # Position matters: this step used to run AFTER the version tag was
+        # pushed, so a commit that failed it still consumed a version number and
+        # still left a tag that the next release measures its version and its
+        # notes against.
+        shell: pwsh
+        run: |
+          dotnet build source/Playnite.VRMods.csproj -c Release `
+            --no-restore -v n | Tee-Object -FilePath ca-analysis.log
+          $buildExit = $LASTEXITCODE
+          $pattern = ': warning CA'
+          $found = @(Select-String -Path ca-analysis.log -Pattern $pattern)
+          if ($found.Count -gt 0) {
+            $found | ForEach-Object { Write-Host $_.Line }
+            Write-Host "Analyzer warnings found: $($found.Count)"
+            Write-Host "::error::build must stay warning-free (AGENTS.md)"
+            exit 1
+          }
+          exit $buildExit
+
+      - name: "Test (gate: runs before the tag exists)"
+        run: >-
+          dotnet test tests/Playnite.VRMods.Tests.csproj
+          -c Release --no-restore
 
       - name: Resolve version + tag
         id: ver
+        # Runs only after every gate above has passed, so a release that cannot
+        # be built or tested no longer leaves a published tag behind. The tag is
+        # still created before Build-Release.ps1 runs: that script does not
+        # stamp a version itself (dotnet publish gets no version argument), so
+        # the only
+        # version the shipped DLL can report is one read from the tags reachable
+        # from HEAD, and the script compares that stamp against the label.
+        #
+        # The dispatch input is named here instead of relying on the implicit
+        # INPUT_<NAME> variable workflow_dispatch creates: an implicit name is
+        # plumbing nobody reviews, and this step is the one that decides the
+        # version a user installs.
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           $lastTag = git describe --tags --match "v*" --abbrev=0 2>$null
 
@@ -192,34 +354,6 @@ jobs:
           "previous_tag=$notesBase" |
               Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: "Code analysis (release gate)"
-        # AGENTS.md requires a 0-warning build, and the plugin project turns the
-        # .NET analyzers on (net462 leaves them off by default). Neither
-        # `dotnet build` nor `dotnet test` fails on a warning, so the gate names
-        # them: any analyzer warning (": warning CA") stops the release.
-        # The build already runs every family; .editorconfig carries the
-        # families that were judged and excluded, each with its reason, so this
-        # step covers every family not excluded there (AGENTS.md, "Analyzers").
-        # Restore warnings (NU...) are out of scope - they come from third-party
-        # packages, not from this code.
-        shell: pwsh
-        run: |
-          dotnet build source/Playnite.VRMods.csproj -c Release -v n |
-            Tee-Object -FilePath ca-analysis.log
-          $buildExit = $LASTEXITCODE
-          $pattern = ': warning CA'
-          $found = @(Select-String -Path ca-analysis.log -Pattern $pattern)
-          if ($found.Count -gt 0) {
-            $found | ForEach-Object { Write-Host $_.Line }
-            Write-Host "Analyzer warnings found: $($found.Count)"
-            Write-Host "::error::build must stay warning-free (AGENTS.md)"
-            exit 1
-          }
-          exit $buildExit
-
-      - name: Test (release gate)
-        run: dotnet test tests/Playnite.VRMods.Tests.csproj -c Release
-
       - name: Build release package (.pext)
         env:
           RELEASE_VERSION: ${{ steps.ver.outputs.version }}
@@ -235,6 +369,7 @@ jobs:
         # changelog lines.
         env:
           PREVIOUS_TAG: ${{ steps.ver.outputs.previous_tag }}
+          RELEASE_VERSION: ${{ steps.ver.outputs.version }}
         run: |
           $range = if ($env:PREVIOUS_TAG) {
             "$env:PREVIOUS_TAG..HEAD"
@@ -267,6 +402,26 @@ jobs:
           if (-not (Test-Path dist)) {
             New-Item -ItemType Directory dist | Out-Null
           }
+          # Check the package exists before publishing notes about it, and
+          # publish the SHA-256 of the exact bytes this job built: a user
+          # installs this file off the release page, and the release page -
+          # including its assets - is writable by anyone who can write to this
+          # repo. A checksum written here is a check on the download that does
+          # not depend on trusting the download.
+          $pext = "dist/VRMod.Tags-$env:RELEASE_VERSION.pext"
+          if (-not (Test-Path -LiteralPath $pext)) {
+            throw "expected release package '$pext' is missing: refusing to " +
+                  "publish a release with no package to hash"
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 `
+            -LiteralPath $pext).Hash.ToLowerInvariant()
+          $lines.Add("")
+          $lines.Add('SHA-256 of VRMod.Tags-' +
+                     "$env:RELEASE_VERSION.pext:")
+          $lines.Add("")
+          $lines.Add('```text')
+          $lines.Add($hash)
+          $lines.Add('```')
           $lines | Set-Content -Path dist/release-notes.md -Encoding utf8
           $lines | ForEach-Object { Write-Host $_ }
 
