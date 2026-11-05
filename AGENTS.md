@@ -179,10 +179,13 @@ on, and the warning gates below are run against it).
   `fix:`/`chore:` ships a feature inside a patch release; the
   Conventional-Commits gate in the `review-gates` job of
   `.github/workflows/ci.yml` catches non-conventional
-  headers). The team ticket goes in the scope slot - `fix(STE-100): ...`
-  - where the gate's scope pattern accepts it; a ticket prefix before
-  the type (`STE-100: fix: ...`) is not a Conventional header and the
-  gate rejects it. Manual re-runs: "Run workflow" with an optional explicit
+  headers). Commit messages stay plain Conventional Commits - no ticket
+  or ticket-like code in the type, the scope, or before the colon; the
+  gate rejects anything shaped that way and the version rules read only
+  the type. What the team calls STE-100 (ASD-STE100 Simplified
+  Technical English) is for prose addressed to people - docs, PR
+  bodies, agent reports: short active sentences, one idea per
+  sentence, plain words. Manual re-runs: "Run workflow" with an optional explicit
   version, which has to be 3-part (a 4-part value would tag a version
   `git describe` matches but GitVersion does not count). Before resolving
   anything the workflow refuses a repo holding a version-shaped tag that is
