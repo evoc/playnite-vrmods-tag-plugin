@@ -288,8 +288,20 @@ jobs:
         # packages, not from this code.
         shell: pwsh
         run: |
+          # -p:DisableGitVersionTask=true: GitVersion stamps assembly
+          # versions, and a review has no business stamping any. Here it
+          # also hard-fails the build: the checkout is shallow, the PR
+          # merge ref carries no tags and no base history, GitVersion
+          # 6.8.2 reports pull/N/merge as an orphaned branch and throws
+          # "No base versions determined on the current branch" (run
+          # 42034123457), which fails a gate whose job is measuring
+          # warnings. The property is what 6.8.2 itself checks
+          # (RunGitVersion runs only when it is literally 'false');
+          # versions themselves are the release job's business, and it
+          # fetches the history that makes the calculation meaningful.
           dotnet build source/Playnite.VRMods.csproj -c Release `
-            --no-restore -v n | Tee-Object -FilePath ca-analysis.log
+            --no-restore -v n -p:DisableGitVersionTask=true |
+            Tee-Object -FilePath ca-analysis.log
           $buildExit = $LASTEXITCODE
           $pattern = ': warning CA'
           $found = @(Select-String -Path ca-analysis.log -Pattern $pattern)
@@ -306,6 +318,9 @@ jobs:
         # the check that used to be a separate job whose cancellation still
         # concluded as a test job having run; here a cancelled step fails the
         # only job, and a PR with no green review-gates cannot merge.
+        # dotnet test builds the plugin project too, so the analysis gate's
+        # reason for disabling GitVersion applies here for the same cost.
         run: >-
           dotnet test tests/Playnite.VRMods.Tests.csproj
           -c Release --no-restore
+          -p:DisableGitVersionTask=true

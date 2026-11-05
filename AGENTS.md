@@ -174,12 +174,15 @@ on, and the warning gates below are run against it).
   action's default is to publish anyway when the `files:` glob matches
   nothing. **Every push to main is a release** — no prereleases; feature
   branches are built locally, never released. Procedure: merge to main
-  with Conventional Commit messages — that's the whole procedure; the
+  with Conventional Commit messages - that's the whole procedure; the
   prefix decides whether the release escalates (a `feat:` mislabeled as
   `fix:`/`chore:` ships a feature inside a patch release; the
   Conventional-Commits gate in the `review-gates` job of
   `.github/workflows/ci.yml` catches non-conventional
-  headers). Manual re-runs: "Run workflow" with an optional explicit
+  headers). The team ticket goes in the scope slot - `fix(STE-100): ...`
+  - where the gate's scope pattern accepts it; a ticket prefix before
+  the type (`STE-100: fix: ...`) is not a Conventional header and the
+  gate rejects it. Manual re-runs: "Run workflow" with an optional explicit
   version, which has to be 3-part (a 4-part value would tag a version
   `git describe` matches but GitVersion does not count). Before resolving
   anything the workflow refuses a repo holding a version-shaped tag that is
@@ -619,6 +622,12 @@ because it pushes the version tag it creates:
   `dotnet format whitespace|style --verify-no-changes` gate
   (`--verify-changes` is not a flag in SDK 8; `--verify-no-changes` is the
   real one) -> vulnerable-package gate -> code-analysis gate -> test gate.
+  The two build-running gates pass `-p:DisableGitVersionTask=true`: an
+  assembly version stamp has no place in a review, and on the PR merge ref
+  (shallow, no tags, branch name `pull/N/merge`) GitVersion 6.8.2 calls
+  the branch orphaned and throws `No base versions determined` (measured
+  on run 42034123457) - version calculation is the release job's job,
+  where `main` and its tags are fetched first.
   Every PR gate lives in this one job, on the commit GitHub actually built
   for the PR (`github.sha`, the merge commit), so what gets reviewed is the
   tree that would be merged: a former split into two jobs meant the message
