@@ -665,6 +665,14 @@ different than the last restore`). `NuGet.config` names one feed
 XML trap found while writing it — a comment containing two consecutive
 hyphens makes the whole file invalid and breaks every restore.
 
+Both csproj files pin `Microsoft.NETFramework.ReferenceAssemblies`
+1.0.3 explicitly: a machine without the net462 targeting pack gets that
+package injected by the SDK, a machine with it installed does not, so
+the two kinds of machine otherwise evaluate different project package
+references against the same committed lock file - which is exactly how
+the first release run after the lock files landed failed with NU1004 on
+windows-latest while the identical build passed on a dev machine.
+
 The `review-gates` restore answers the two locked-restore failures
 differently: NU1403 fails hard with no regeneration, because a package's
 content no longer matching its recorded entry is the supply-chain
