@@ -1,0 +1,45 @@
+<Project>
+
+  <!-- One place decides how every project in this solution restores and
+       builds in CI. Directory.Build.props is read by both projects
+       (source/Playnite.VRMods.csproj and tests/Playnite.VRMods.Tests.csproj)
+       before either project file runs, so a rule here cannot be skipped by
+       adding a project.
+
+       Repeatable restore (measured on SDK 8.0.427 / NuGet 6.x):
+
+         RestorePackagesWithLockFile  - every project gets a committed
+             packages.lock.json: the direct packages AND every transitive
+             one, each with its resolved version and a sha512 of the package
+             content. Without it, the package graph the release ships is
+             resolved on the runner at release time; with it, the graph is a
+             reviewed file in the repo.
+
+         RestoreLockedMode, only in CI - a restore is then refused when the
+             lock file does not match the project, instead of quietly
+             re-resolving to something newer. Locally the mode stays off so
+             `dotnet restore` can still write an updated lock file when a
+             package version is deliberately changed.
+
+         ContinuousIntegrationBuild, only in CI - the switch the two rules
+             above key on. It also makes the compiler deterministic and maps
+             the build machine's source paths out of the shipped PDBs, which
+             is what "the released DLL" has to mean before a user installs it.
+
+       Both conditionals follow the shape the .NET project-file analyzers
+       document as compliant (Proj0042 for ContinuousIntegrationBuild,
+       Proj0044 for locked mode keyed on it), and the same rules name the
+       unconditioned form as the non-compliant one. -->
+
+  <PropertyGroup>
+    <ContinuousIntegrationBuild
+      Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode
+      Condition="'$(ContinuousIntegrationBuild)' == 'true'">true</RestoreLockedMode>
+  </PropertyGroup>
+
+</Project>
