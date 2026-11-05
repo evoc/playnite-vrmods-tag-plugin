@@ -264,8 +264,10 @@ it reads and what tags it writes, so the comparison stays useful.
 ## Contributing
 
 [AGENTS.md](AGENTS.md) is the entry point, and commit messages are checked by
-[commitlint](.github/workflows/commitlint.yml) in Conventional-Commits form.
-Dependabot is configured for the NuGet requirements.
+the [CI job](.github/workflows/ci.yml) in Conventional-Commits form, alongside
+the format, vulnerable-package, analyzer and test gates. Builds restore from
+committed `packages.lock.json` files in locked mode, against one named feed.
+Dependabot is configured for the NuGet requirements and the workflow pins.
 
 ## License
 
