@@ -1,0 +1,257 @@
+# Pull-request review gates, in one job: commit messages, formatting, the
+# package audit, the analyzer build, and the tests.
+#
+# This file replaces .github/workflows/commitlint.yml, which ran the message
+# and format gates on a different commit than the release job builds and
+# tests. Measured from this repo's own run records: PR #6's Commitlint job
+# (pull_request event) checked out 9268491d193b, while the Release job for the
+# same PR checked out 2a28664a93e1 - GitHub's merge commit. So the format gate
+# judged the PR tip while the analyzer gate, the tests, the shipped .pext and
+# the release tag all judged the merge commit, which is a different tree
+# whenever base and head have diverged. Running every gate here means the
+# commit that gets released is the commit that was reviewed.
+#
+# Conventional Commits belongs in this job because the release version is
+# derived from these messages (feat: -> minor, fix: -> patch, <type>!: /
+# BREAKING CHANGE: -> major, per GitVersion.yml ref-0.0.1), so a
+# non-conventional message under-bumps the release: the version a user
+# installs, and the tag that becomes the base for the next release.
+#
+# The gates run in cheap-to-expensive order, and none of them is a status check
+# anyone can skip: a required check can only be required once it has reported
+# on a commit at least once, so a job that can fail to start never blocks a
+# merge (the failure mode seen on this repo's Run #5, whose test step was
+# cancelled and the run still concluded a test job ran). Every step here is
+# inside one job that starts as soon as a PR opens.
+#
+# Supply-chain shape is shared with the release job: SHA-pinned actions pinned
+# to the commit a tag points at (see release.yml's header), locked-mode restore
+# against the committed packages.lock.json files (Directory.Build.props), and
+# git history fetched by named SHA instead of `fetch-depth: 0`.
+name: CI
+
+on:
+  pull_request:
+
+# Least privilege: this job reads the PR and nothing else. A workflow token
+# defaults to write, which a review job has no use for.
+permissions:
+  contents: read
+
+jobs:
+  review-gates:
+    # The same image the release job uses, so a PR that passes here passes
+    # there: the plugin targets net48, Playnite.SDK is a Windows desktop
+    # assembly, and the release job runs on windows-latest.
+    runs-on: windows-latest
+    steps:
+      - name: "Checkout (GitHub's merge commit for this PR, one commit)"
+        # actions/checkout v7.0.1, the same commit the release job pins
+        # (see .github/workflows/release.yml for why tags are not good enough).
+        #
+        # Not fetch-depth: 0: checkout documents that as fetching all history
+        # for all branches and tags, and on a pull_request event the repository
+        # also carries refs/pull/<n>/head - a ref whose commits come from the
+        # PR author's repository. This job needs two commits, not the object
+        # store of every branch, tag and fork, so it fetches those two by name
+        # in the next step.
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+
+      - name: "Fetch the two commits this job reviews, named by SHA"
+        # The two ends of the PR are read from the event payload, but they are
+        # used as commit ids, and only after being checked against the shape a
+        # commit id has. The alternative - a ref name from the payload spliced
+        # into a shell command - is the part an attacker chooses.
+        #
+        # Measured on git 2.56 against a depth-1 checkout of a PR merge commit
+        # (the shape checkout performs for pull_request): fetching the base and
+        # head ids by name makes `git log base..head` return exactly the three
+        # commits of the PR, and `git for-each-ref` afterwards lists no refs at
+        # all - only FETCH_HEAD. In a shallow clone that fetch needs
+        # --unshallow; without it, the range resolves to nothing.
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          foreach ($pair in @(@('base', $env:BASE_SHA),
+                              @('head', $env:HEAD_SHA))) {
+            if ($pair[1] -notmatch '^[0-9a-f]{7,40}$') {
+              throw "$($pair[0]) commit id '$($pair[1])' is not a hex " +
+                    "commit id - refusing to run git with it"
+            }
+          }
+          $deepen = @()
+          if (Test-Path -LiteralPath '.git/shallow') {
+            $deepen = @('--unshallow')
+          }
+          git fetch --no-tags $deepen origin $env:BASE_SHA $env:HEAD_SHA
+
+      - name: "Setup .NET SDK (pinned in global.json)"
+        # actions/setup-dotnet v6.1.0 (tag points directly at this commit;
+        # global.json selects 8.0.421, and v6 installs the global.json version
+        # when given no inputs).
+        uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
+        with:
+          # The cache key is the content of the named lock files, so a changed
+          # package graph cannot reuse a cache - it gets a new key.
+          cache: true
+          cache-dependency-path: |
+            source/packages.lock.json
+            tests/packages.lock.json
+
+      - name: "Restore (locked mode: the graph the lock files name)"
+        # Locked-mode restore: a csproj asking for a version the committed
+        # packages.lock.json does not name fails with NU1004, and a lock entry
+        # whose recorded content hash no longer matches the package fails with
+        # NU1403 (both measured on SDK 8.0.427). A PR review therefore reads the
+        # dependency graph as a diff, and a dependency that is not in the
+        # committed lock file never reaches the build.
+        #
+        # It runs before the gates so each of them can pass --no-restore: a gate
+        # that re-resolves judges a graph other than the one the release ships.
+        run: dotnet restore Playnite.VRMods.sln --locked-mode
+
+      - name: "Lint commit messages (Conventional Commits)"
+        # Conventional Commits, owned by this repo instead of pulled in as a
+        # third-party action. The previous version was wagoid/commitlint-github-
+        # action (v2.2.5), which - even SHA-pinned - handed a third party's code
+        # the GITHUB_TOKEN, and whose pin could not be wrapped inside this
+        # file's 80-column limit. The rule is one regex and it decides the
+        # release bump, so owning it is cheaper than depending on it: no
+        # supply-chain step, no token hand-off, and the type list is copied
+        # verbatim from GitVersion.yml so the gate cannot drift from the rules
+        # that compute the version.
+        shell: pwsh
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $types = 'build|chore|ci|docs|feat|fix|perf|refactor|' +
+            'revert|style|test'
+          $pattern = "^($types)(\([\w\s-,/\\]+\))?!?: .+"
+          $range = "$env:BASE_SHA..$env:HEAD_SHA"
+          # Fail closed. The version this rule protects is computed from
+          # commits reachable from a tag, and a range that resolves to nothing
+          # is not a pass: an earlier shape of this step ran `git log` on
+          # whatever range the payload named and exited 0 when the range named
+          # no commits (measured: an unknown id prints "fatal: bad object" to
+          # stderr while `git log` still exits 0, and 0 headers reported as
+          # "OK: 0 commit header(s) conventional"). The range is now fetched by
+          # name above and required to contain commits before any header is
+          # judged.
+          $count = git rev-list --count $range 2>$null
+          if ($LASTEXITCODE -ne 0 -or -not $count) {
+            throw "commit range $range resolves to nothing: refusing to call " +
+                  "an unmeasurable commit set conventional"
+          }
+          $headers = @(git log --no-merges --format='%s' $range)
+          $bad = @($headers | Where-Object { $_ -notmatch $pattern })
+          if ($bad.Count -eq 0) {
+            Write-Host "OK: $($headers.Count) commit header(s) conventional."
+            exit 0
+          }
+          foreach ($h in $bad) { Write-Host "::error::Not conventional: $h" }
+          Write-Host "Expected <type>(scope)!: message, type in: $types"
+          exit 1
+
+      - name: "Format gate (whitespace + style)"
+        # AGENTS.md requires a 0-warning build but says nothing about
+        # formatting, so style drift was invisible. `dotnet format
+        # --verify-changes` (the flag the review quoted) does not exist in SDK
+        # 8; these two subcommands do, and both are clean today.
+        run: |
+          dotnet format whitespace --verify-no-changes --no-restore
+          dotnet format style --verify-no-changes --no-restore
+
+      - name: "Vulnerable packages (supply-chain gate)"
+        # Fails the PR if this project - or anything it pulls in - depends on a
+        # package with a known advisory. The plugin parses hostile web input
+        # inside System.Text.Json's code path, so an unpatched transitive
+        # dependency is part of the attack surface, not a hygiene note.
+        #
+        # Same rules the release job documents: `dotnet list package
+        # --vulnerable` reports advisories on stdout while exiting 0, and exits
+        # 127 with a usage error when run without a restore
+        # (dotnet/sdk#16852, both measured here), so the findings are read out
+        # of --format json and a non-empty list fails the job. Both projects are
+        # audited: the test packages are not in the .pext, but their code runs
+        # on the runner with this job's token.
+        shell: pwsh
+        run: |
+          $projects = @(
+            "source/Playnite.VRMods.csproj",
+            "tests/Playnite.VRMods.Tests.csproj"
+          )
+          $findings = @()
+          $audited = 0
+          foreach ($proj in $projects) {
+            $audit = dotnet list $proj package --vulnerable `
+              --include-transitive --format json | Out-String
+            if ($LASTEXITCODE -ne 0) { throw "package audit failed: $audit" }
+            $json = $audit | ConvertFrom-Json
+            # Fail closed: an audit that names no project is not a pass.
+            if (-not $json.projects) {
+              throw "audit named no project for '${proj}' - refusing to pass " +
+                    "an unaudited graph"
+            }
+            $audited += $json.projects.Count
+            foreach ($p in $json.projects) {
+              foreach ($fw in @($p.frameworks)) {
+                # A clean project reports no frameworks section at all.
+                if (-not $fw) { continue }
+                $pkgs = @($fw.topLevelPackages)
+                $pkgs += @($fw.transitivePackages)
+                foreach ($pkg in $pkgs) {
+                  foreach ($vuln in @($pkg.vulnerabilities)) {
+                    $line = $pkg.id + " " + $pkg.resolvedVersion
+                    $line += " [" + $vuln.severity + "] " + $vuln.advisoryurl
+                    $findings += $line
+                  }
+                }
+              }
+            }
+          }
+          if ($findings.Count -gt 0) {
+            $findings | ForEach-Object { Write-Host $_ }
+            Write-Host "::error::vulnerable dependency ($($findings.Count))"
+            exit 1
+          }
+          Write-Host ("No vulnerable packages across $audited audited " +
+                      "project framework entry(ies).")
+
+      - name: "Code analysis (gate)"
+        # AGENTS.md requires a 0-warning build, and the plugin project turns the
+        # .NET analyzers on (net462 leaves them off by default). Neither
+        # `dotnet build` nor `dotnet test` fails on a warning, so the gate names
+        # them: any analyzer warning (": warning CA") fails the review. The
+        # build already runs every family; .editorconfig carries the families
+        # that were judged and excluded, each with its reason, so this step
+        # covers every family not excluded there (AGENTS.md, "Analyzers").
+        # Restore warnings (NU...) are out of scope - they come from third-party
+        # packages, not from this code.
+        shell: pwsh
+        run: |
+          dotnet build source/Playnite.VRMods.csproj -c Release `
+            --no-restore -v n | Tee-Object -FilePath ca-analysis.log
+          $buildExit = $LASTEXITCODE
+          $pattern = ': warning CA'
+          $found = @(Select-String -Path ca-analysis.log -Pattern $pattern)
+          if ($found.Count -gt 0) {
+            $found | ForEach-Object { Write-Host $_.Line }
+            Write-Host "Analyzer warnings found: $($found.Count)"
+            Write-Host "::error::build must stay warning-free (AGENTS.md)"
+            exit 1
+          }
+          exit $buildExit
+
+      - name: "Test (gate)"
+        # 115 tests, all offline (AGENTS.md: no network in tests). This is the
+        # check that used to be a separate job whose cancellation still
+        # concluded as a test job having run; here a cancelled step fails the
+        # only job, and a PR with no green review-gates cannot merge.
+        run: >-
+          dotnet test tests/Playnite.VRMods.Tests.csproj
+          -c Release --no-restore
