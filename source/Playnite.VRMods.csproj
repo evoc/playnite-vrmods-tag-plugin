@@ -50,6 +50,18 @@
     <!-- Version comes from the git tag (see GitVersion.yml); the tag is created
          automatically by the release workflow on every push to main. -->
     <PackageReference Include="GitVersion.MsBuild" Version="6.8.2" PrivateAssets="all" />
+    <!-- The net462 reference assemblies the committed packages.lock.json
+         already records as a Direct dependency at 1.0.3: a machine without
+         the old .NET Framework targeting pack gets this package injected
+         by the SDK, a machine with the pack installed does not - and a
+         locked-mode restore then judges the project against a lock file
+         written on the other kind of machine. That is how the first
+         release run with lock files failed on windows-latest with NU1004
+         while the same build passed locally. Naming it here makes the
+         graph identical on both. PrivateAssets=all: reference assemblies
+         only, nothing of it ends up in the shipped .pext. -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies"
+                      Version="1.0.3" PrivateAssets="all" />
 <PackageReference Include="PlayniteSDK" Version="6.15.0" />
      <PackageReference Include="System.Text.Json" Version="8.0.5" />
      <PackageReference Include="System.ValueTuple" Version="4.5.0" />
