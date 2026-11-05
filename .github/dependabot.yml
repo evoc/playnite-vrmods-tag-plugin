@@ -1,6 +1,6 @@
 # Dependabot: the update robot this repo did not have.
 #
-# Why it matters here specifically: this plugin parses twelve third-party
+# Why it matters here specifically: this plugin parses third-party
 # websites (and writes Playnite library data from what it reads), and its
 # release is produced by third-party Actions. Both are supply chains:
 #   - a compromised or hijacked Action runs with a workflow token on every push
@@ -9,6 +9,15 @@
 #     plugin executes on the user's machine while handling hostile input.
 # Dependabot is what keeps the SHA pins in .github/workflows from silently
 # rotting.
+#
+# One gap stated here rather than discovered in CI later: Dependabot edits
+# version references but does not regenerate packages.lock.json (upstream
+# support is an open dependabot-core issue), so every NuGet bump PR this
+# file opens arrives with a stale lock file and is refused by the locked
+# restore of the CI job. That step regenerates the lock files, prints the
+# exact diff, and fails; committing that diff onto the bump branch is the
+# human follow-up that makes such a PR green. Actions pins have no lock
+# file and are unaffected.
 #
 # Pin style on purpose: majors are NOT auto-bumped. A major version of a
 # dependency or an Action is a behavioural change and gets a human decision

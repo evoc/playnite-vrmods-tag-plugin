@@ -174,7 +174,8 @@ jobs:
         # So: restore first, read the findings out of --format json, and let a
         # non-empty list stop the release. Both directions checked locally - the
         # plugin project passes from a deleted obj/, a project pinning
-        # System.Text.RegularExpressions 4.3.0 fails with 3 findings.
+        # System.Text.RegularExpressions 4.3.0 fails with its advisory
+        # findings listed.
         # Both projects, not only the shipped one: the test packages are not in
         # the .pext, but their code runs on this runner with this job's token
         # (Microsoft.NET.Test.Sdk and NUnit3TestAdapter drive the test host), so
@@ -188,6 +189,11 @@ jobs:
           )
           # Locked: what is judged here is the graph the committed lock files
           # name, which is the same graph the build and the .pext then use.
+          # A failure here stops the release and stays a failure: a release
+          # job never regenerates a lock file (the PR-side step in ci.yml
+          # prints the regenerated diff a human commits before merging).
+          # If main ever reaches this state, main's csproj/lock pair is
+          # broken and must be repaired before the next release.
           dotnet restore Playnite.VRMods.sln --locked-mode
           $findings = @()
           $audited = 0

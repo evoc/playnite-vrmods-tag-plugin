@@ -106,13 +106,67 @@ jobs:
         # Locked-mode restore: a csproj asking for a version the committed
         # packages.lock.json does not name fails with NU1004, and a lock entry
         # whose recorded content hash no longer matches the package fails with
-        # NU1403 (both measured on SDK 8.0.427). A PR review therefore reads the
-        # dependency graph as a diff, and a dependency that is not in the
+        # NU1403 (both measured on SDK 8.0.427). A PR review therefore reads
+        # the dependency graph as a diff, and a dependency that is not in the
         # committed lock file never reaches the build.
         #
-        # It runs before the gates so each of them can pass --no-restore: a gate
-        # that re-resolves judges a graph other than the one the release ships.
-        run: dotnet restore Playnite.VRMods.sln --locked-mode
+        # It runs before the gates so each of them can pass --no-restore: a
+        # gate that re-resolves judges a graph other than the one the release
+        # ships.
+        #
+        # A failed locked restore is two different situations, and they get
+        # two different answers:
+        #
+        #   NU1403 - a package's content no longer matches what the lock file
+        #   recorded. That is the supply-chain signal: it fails hard, with no
+        #   regeneration and no diff to copy, because someone has to review
+        #   the package before any lock file is allowed to change.
+        #
+        #   NU1004 - the csproj asks for a version the committed lock files
+        #   do not name. The everyday cause is a version bump shipped without
+        #   its lock refresh, and the main source of those is Dependabot:
+        #   Dependabot edits the PackageReference but does not regenerate
+        #   packages.lock.json (upstream support is still an open
+        #   dependabot-core issue), so every NuGet bump PR would otherwise
+        #   fail here with nothing saying what to do about it. This job holds
+        #   only a read-only token and cannot push the fix onto the branch,
+        #   so it regenerates the lock files in its own throwaway checkout
+        #   and prints the exact regenerated diff. Committing that diff onto
+        #   the PR branch - or running dotnet restore locally and pushing -
+        #   is then the human's 30-second job, and the graph is still
+        #   reviewed as a diff, just a diff a human commits.
+        shell: pwsh
+        run: |
+          $locked = dotnet restore Playnite.VRMods.sln --locked-mode `
+            2>&1 | Out-String
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host ("locked restore clean: the graph is the one the " +
+                        "committed lock files name.")
+            exit 0
+          }
+          Write-Host $locked
+          if ($locked -match 'NU1403') {
+            throw ("package content does not match what the lock file " +
+                   "recorded (NU1403): refusing to regenerate a lock file " +
+                   "while a package's identity is in question.")
+          }
+          dotnet restore Playnite.VRMods.sln 2>&1 | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "unlocked restore failed too: this is not lock drift"
+          }
+          $diff = git -c core.pager=cat diff --no-color -- `
+            source/packages.lock.json tests/packages.lock.json | Out-String
+          Write-Host ("Regenerated lock files (this job's token is " +
+                      "read-only, so they are printed, not committed):")
+          Write-Host $diff
+          @('```text', $diff.TrimEnd(), '```') |
+            Out-File -Append -Encoding utf8 `
+              -FilePath $env:GITHUB_STEP_SUMMARY
+          Write-Host ("::error::locked restore failed (NU1004): commit " +
+                      "the lock-file diff above onto this branch - " +
+                      "locally: 'dotnet restore' and push the " +
+                      "packages.lock.json changes.")
+          exit 1
 
       - name: "Lint commit messages (Conventional Commits)"
         # Conventional Commits, owned by this repo instead of pulled in as a
@@ -248,8 +302,8 @@ jobs:
           exit $buildExit
 
       - name: "Test (gate)"
-        # 115 tests, all offline (AGENTS.md: no network in tests). This is the
-        # check that used to be a separate job whose cancellation still
+        # The full suite, run offline: tests never touch the network. This is
+        # the check that used to be a separate job whose cancellation still
         # concluded as a test job having run; here a cancelled step fails the
         # only job, and a PR with no green review-gates cannot merge.
         run: >-

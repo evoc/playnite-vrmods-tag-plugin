@@ -665,8 +665,21 @@ different than the last restore`). `NuGet.config` names one feed
 XML trap found while writing it — a comment containing two consecutive
 hyphens makes the whole file invalid and breaks every restore.
 
+The `review-gates` restore answers the two locked-restore failures
+differently: NU1403 fails hard with no regeneration, because a package's
+content no longer matching its recorded entry is the supply-chain
+signal, and someone has to review the package before any lock file
+changes; NU1004 - a version reference without its lock refresh -
+regenerates the lock files in the runner's throwaway checkout, prints
+the exact diff, and fails, so a human commits that diff onto the PR
+branch. NU1004 is the everyday case because Dependabot opens NuGet
+bump PRs without regenerating lock files (open upstream issue), see
+below.
+
 `.github/dependabot.yml` opens weekly PRs for `github-actions`, `/source`
-and `/tests` NuGet (majors refused). PlayniteSDK bumps are refused outright
+and `/tests` NuGet (majors refused; every NuGet bump PR needs the
+refreshed lock file printed by the restore step before it can go
+green). PlayniteSDK bumps are refused outright
 because that version is the user's Playnite install, not this repo's build
 choice (the SDK assemblies are stripped from the shipped `.pext`), while its
 advisories stay reachable: an `ignore` rule that names `update-types` filters
