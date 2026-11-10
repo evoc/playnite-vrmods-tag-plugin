@@ -8,7 +8,12 @@ suggested matches are right. You open it:
   already-decided), pending first, so you can review or change your decisions;
 - from the bell notification — the pending matches when there are new ones,
   or every matched game when your saved matches picked up tag changes (a scan
-  that found nothing new posts no notification at all).
+  that found nothing new posts no notification at all);
+- from **Extensions → VRMod Tags → Scan...** — a full scan first, then this
+  dialog with every matched game;
+- from a game's context menu, **VRMod Tags → Check this game for VR mods...**
+  — a scan of the selected games only, then their rows. Both menus are in
+  [Getting started](getting-started.md#menus).
 
 ![The review dialog](img/review-dialog.png)
 
@@ -115,6 +120,11 @@ with no Steam link, match by name exactly as they always did.
   your library (tags and links are applied), **Cancel** closes the dialog
   and discards the unsaved changes. **Save** is disabled while everything
   is already saved. The **×** in the title bar also closes without saving.
+- The library menu offers the same decisions one game at a time: a game's
+  right-click menu → **VRMod Tags** → **Reset my decisions for this
+  game...** or **Reject all assigned VR mods on this game...**. What each
+  of them does to the tags and links — in this dialog and in that menu —
+  is in [Tags & data sources](tags.md#how-a-tag-comes-off-again).
 
 The dialog is a normal Playnite window: it can be
 minimized, maximized, and resized from the edges.
@@ -142,3 +152,8 @@ all matches are reviewed again. It asks what to do with the tags:
 
 - **Reset only** — keep the tags already applied to your games;
 - **Reset and remove tags** — also remove every `VRMod*` tag from your library.
+
+This is the library-wide hammer. To undo **one game**, use that game's
+right-click menu instead — **Reset my decisions for this game...** or
+**Reject all assigned VR mods on this game...**, both under **VRMod
+Tags** ([Getting started → Menus](getting-started.md#menus)).
