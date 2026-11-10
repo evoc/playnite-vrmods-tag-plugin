@@ -11,9 +11,11 @@ namespace Playnite.VRMods
     public enum MatchDecision
     {
         /// <summary>
-        /// No decision has been made yet. This match will appear in the review dialog
-        /// for the user to confirm or reject. If no review dialog is shown (e.g., during
-        /// scheduled background scans), Pending matches are auto-applied.
+        /// No decision has been made yet: the user has never been asked about this pairing, so it is
+        /// never applied - not by a scan that shows the review dialog, and not by one that does not.
+        /// A scan without a dialog holds these pairings and counts them in its summary; they wait until
+        /// a dialog offers them. Exact-name pairings arrive there pre-ticked as a yes, which is a
+        /// prefilled answer, not an application.
         /// </summary>
         Pending,
 

@@ -533,7 +533,7 @@ namespace Playnite.VRMods
                 // the user has to see that before choosing what to do next.
                 FooterPanel.IsEnabled = true;
                 if (failure != null)
-                    _api.Dialogs.ShowErrorMessage(failure, "VRMod VR mod tags");
+                    _api.Dialogs.ShowErrorMessage(failure, "Saving VRMod tags");
                 return;
             }
 
@@ -729,7 +729,12 @@ namespace Playnite.VRMods
                 decisionWrites.Add((match.DecisionKey, MatchDecision.Accepted,
                     string.Join("\n", match.AppliedTagNames)));
 
-                // In-place TagIds mutation is not tracked — persist via Update().
+                // Everything above added to the tag list where it stood. Hand the finished set over:
+                // a game's views refresh when the list is replaced, not when ids appear in the list it
+                // already has, or the library behind this dialog keeps showing the tags the game had
+                // when the user selected it (see VrModGameTags). Update() is the database's separate
+                // listener and is still required.
+                VrModGameTags.SetTags(match.PlayniteGame, match.PlayniteGame.TagIds);
                 api.Database.Games.Update(match.PlayniteGame);
             }
 
@@ -824,7 +829,9 @@ namespace Playnite.VRMods
                     match.PlayniteGame.TagIds.Remove(umbrellaTag.Id);
             }
 
-            // In-place TagIds mutation is not tracked — persist via Update().
+            // As on the accept path: the removals above edited the list in place, and a game's views
+            // refresh from the list being replaced (see VrModGameTags). Update() then persists it.
+            VrModGameTags.SetTags(match.PlayniteGame, match.PlayniteGame.TagIds);
             api.Database.Games.Update(match.PlayniteGame);
         }
 
@@ -1503,7 +1510,7 @@ namespace Playnite.VRMods
             if (failure != null)
             {
                 Log.Error("VRMod Review Dialog: " + failure);
-                _api.Dialogs.ShowErrorMessage(failure, "VRMod VR mod tags");
+                _api.Dialogs.ShowErrorMessage(failure, "Removing VRMod tags");
             }
             FooterPanel.IsEnabled = true;
         }

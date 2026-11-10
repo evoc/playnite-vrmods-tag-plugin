@@ -1,4 +1,7 @@
 using System;
+using System.Linq;
+using System.Threading.Tasks;
+using Playnite.SDK.Models;
 using Playnite.VRMods;
 
 namespace PlayniteVRMods.Tests.TestHelpers
@@ -66,5 +69,42 @@ namespace PlayniteVRMods.Tests.TestHelpers
         public static void ClearDecisionForListing(this VrModTagSettings settings, VrModEntry listing,
             string sourceId, Guid gameId)
             => settings.ClearDecisionByKey(DecisionKeys.ForListing(listing, sourceId, gameId));
+
+        /// <summary>
+        /// Records the user saying yes to every listing a test source publishes, for the given games.
+        ///
+        /// A scan puts a tag on a game for one reason: the user accepted that pairing. A test that
+        /// asserts tags therefore has to leave that state behind - the same state the review dialog
+        /// leaves in a real library, and the state "did the plugin pair these two records?" is really
+        /// asking about, since the plugin consults a decision only for a pairing its match rules
+        /// already produced. The source id comes from the source and the identity from the listing, so
+        /// the seeded key is the key the scan looks for even when the listing carries an App ID or a
+        /// page URL.
+        /// </summary>
+        public static void AcceptListingsFrom(this VrModTagSettings settings, BaseVrModParser source,
+            params Guid[] gameIds)
+        {
+            foreach (var listing in source.FetchEntriesAsync().GetAwaiter().GetResult())
+                foreach (var gameId in gameIds)
+                    settings.SetDecisionForListing(listing, source.SourceId, gameId, MatchDecision.Accepted);
+        }
+
+        /// <summary>
+        /// Records the user saying yes to ONE pairing: the listing a source publishes under
+        /// <paramref name="listingName"/>, against the games named here.
+        ///
+        /// <see cref="AcceptListingsFrom"/> accepts every listing of a source for every game listed, and
+        /// for a multi-listing source that seeds pairings no test means: accepting the 'Resident Evil 7'
+        /// listing against the 'Resident Evil 3' game is a second question, and answering it puts a third
+        /// tag on that game - which a test counting tags then reads as a bug in the plugin.
+        /// </summary>
+        public static void AcceptListing(this VrModTagSettings settings, BaseVrModParser source,
+            string listingName, params Guid[] gameIds)
+        {
+            var listing = source.FetchEntriesAsync().GetAwaiter().GetResult()
+                .Single(e => string.Equals(e.GameName, listingName, StringComparison.OrdinalIgnoreCase));
+            foreach (var gameId in gameIds)
+                settings.SetDecisionForListing(listing, source.SourceId, gameId, MatchDecision.Accepted);
+        }
     }
 }

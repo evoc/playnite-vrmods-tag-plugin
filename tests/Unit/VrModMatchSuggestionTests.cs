@@ -430,6 +430,9 @@ namespace PlayniteVRMods.Tests.Unit
             var gotyShouted = AddGame("Tomb Raider GAME OF THE YEAR EDITION");
             var remake = AddGame("Tomb Raider: Anniversary");
             var parser = RegisterSource(new VrModEntry { GameName = "Tomb Raider", Category = "UEVR" });
+            // The three store copies are the pairings this rule asserts, so the user is taken to have
+            // agreed to them. 'Anniversary' is left unasked on purpose: it stays the question below.
+            _service.Settings.AcceptListingsFrom(parser, plain.Id, goty.Id, gotyShouted.Id);
 
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 

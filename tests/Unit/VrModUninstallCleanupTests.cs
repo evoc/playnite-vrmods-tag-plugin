@@ -69,16 +69,17 @@ namespace PlayniteVRMods.Tests.Unit
         {
             var service = NewService(out var skyrim, out var fallout, out var parser);
 
+            // Both pairings agreed before the scan. The listing carries a source URL, so the decision is
+            // keyed by that URL - hence the helper that reads it off the listing rather than a name.
+            service.Settings.AcceptListing(parser, "Skyrim", skyrim.Id);
+            service.Settings.AcceptListing(parser, "Fallout 4", fallout.Id);
+
             service.RunFullScanAsync().GetAwaiter().GetResult();
-            // Each game gets the umbrella tag plus its category tag.
+
+            // A yes means the umbrella tag plus the category tag, and the link back to the source it came from.
             Assert.That(skyrim.TagIds, Has.Count.EqualTo(2));
             Assert.That(fallout.TagIds, Has.Count.EqualTo(2));
             Assert.That(_tags.Items, Has.Count.EqualTo(3));
-
-            service.Settings.SetDecision(parser.SourceId, "Skyrim", skyrim.Id, MatchDecision.Accepted);
-            service.ReconcileSourceLinks(skyrim);
-            service.Settings.SetDecision(parser.SourceId, "Fallout 4", fallout.Id, MatchDecision.Accepted);
-            service.ReconcileSourceLinks(fallout);
             Assert.That(skyrim.Links, Has.Count.EqualTo(1));
             Assert.That(fallout.Links, Has.Count.EqualTo(1));
 

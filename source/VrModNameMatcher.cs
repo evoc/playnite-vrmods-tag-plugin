@@ -290,7 +290,8 @@ namespace Playnite.VRMods
         ///
         /// The -1 return value means "no match" and is used by callers to skip the entry.
         /// Scores from the threshold up to 0.999 indicate fuzzy matches that go through the
-        /// review dialog. Score of 1.0 indicates an exact match that can be auto-applied.
+        /// review dialog. A score of 1.0 means the names are the same product: the row arrives in that
+        /// dialog already ticked as a yes, which is still a prefilled answer the user saves, not an apply.
         ///
         /// Fuzzy matching (scores just above the threshold, up to 0.99) is useful for:
         /// - Typos in source data: "Resident Evil 7" vs "Resident Evil 7 bihocolateral"
@@ -508,10 +509,34 @@ namespace Playnite.VRMods
         /// one name-keyed entry that a stale-removal on either duplicate would wipe for both.
         /// </summary>
         /// <returns>A unique decision key in format "sourceId||sourceGame||gameId".</returns>
+        /// <summary>The separator between the three parts of a decision key.</summary>
+        public const string DecisionKeySeparator = "||";
+
         public static string MakeDecisionKey(string sourceId, string sourceGameName,
             Guid gameId)
         {
-            return $"{sourceId}||{sourceGameName}||{gameId:D}";
+            return $"{sourceId}{DecisionKeySeparator}{sourceGameName}{DecisionKeySeparator}{gameId:D}";
+        }
+
+        /// <summary>
+        /// The Playnite game half of a decision key: the last separator-separated part, a Guid written in
+        /// "D" form. Read from the END on purpose - the middle part is a Steam App ID, a page path or a
+        /// listing title, and a title is free to contain "||", where a split from the left would take the
+        /// second word of a two-word title for the game and lose the decision. False for a key with no
+        /// Guid tail: the legacy name-keyed decisions still in users' config.json, and corrupt data.
+        /// </summary>
+        /// <param name="key">A decision key as built by <see cref="MakeDecisionKey"/>.</param>
+        /// <param name="gameId">The game the key names, or Guid.Empty.</param>
+        /// <returns>True when the key names a game.</returns>
+        public static bool TryGetDecisionGameId(string? key, out Guid gameId)
+        {
+            gameId = Guid.Empty;
+            if (string.IsNullOrEmpty(key))
+                return false;
+
+            var last = key!.LastIndexOf(DecisionKeySeparator, StringComparison.Ordinal);
+            return last >= 0
+                && Guid.TryParseExact(key.Substring(last + DecisionKeySeparator.Length), "D", out gameId);
         }
 
         // ---------------------------------------------------------------------------------------

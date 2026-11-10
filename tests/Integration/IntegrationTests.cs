@@ -70,7 +70,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -99,7 +101,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -127,6 +131,7 @@ namespace PlayniteVRMods.Tests.Integration
             _registry.Register(parser);
 
             var settings = new VrModTagSettings();
+            settings.AcceptListingsFrom(parser, game.Id);
             var service = new VrModTagService(_mockApi, settings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
@@ -169,7 +174,10 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(flat2Parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(rototParser, game.Id);
+            vrSettings.AcceptListingsFrom(flat2Parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(3));
@@ -204,7 +212,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -276,7 +286,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -308,7 +320,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -331,7 +345,9 @@ namespace PlayniteVRMods.Tests.Integration
                 "change-v1");
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
 
             // First scan — should fetch and tag
             service.RunFullScanAsync().GetAwaiter().GetResult();
@@ -402,7 +418,12 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            // Only New Game gets a decision. Old Game carries a VRMod tag from a listing its source no
+            // longer publishes, so nobody could have agreed to that pairing now - and an accepted
+            // decision is what keeps a tag on, which is the whole thing this test is checking off.
+            vrSettings.AcceptListingsFrom(parser, newGame.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(oldGame.TagIds, Is.Not.Null.And.Empty);
@@ -438,7 +459,10 @@ namespace PlayniteVRMods.Tests.Integration
             _registry.Register(activeParser);
             _registry.Register(disabledParser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(activeParser, game.Id);
+            vrSettings.AcceptListingsFrom(disabledParser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             // Only active source tags applied
@@ -495,7 +519,10 @@ namespace PlayniteVRMods.Tests.Integration
             _registry.Register(parser1);
             _registry.Register(parser2);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser1, game.Id);
+            vrSettings.AcceptListingsFrom(parser2, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2)); // VRMod + Head Tracked
@@ -507,7 +534,7 @@ namespace PlayniteVRMods.Tests.Integration
             registry2.Register(parser1);
             registry2.Register(parser2);
 
-            var service2 = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), registry2);
+            var service2 = new VrModTagService(_mockApi, vrSettings, new NullLogger(), registry2);
             service2.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(3));
@@ -550,7 +577,14 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            // One decision per listing, each against its own game. Accepting all three for all three games
+            // would claim the user agreed to put the Half-Life 2 mod on Zelda - harmless here only because
+            // all three listings share one category tag.
+            vrSettings.AcceptListing(parser, "Half-Life 2", hl2.Id);
+            vrSettings.AcceptListing(parser, "The Legend of Zelda: Breath of the Wild", zelda.Id);
+            vrSettings.AcceptListing(parser, "DOOM 3", doom.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(hl2.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -598,7 +632,12 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            // One decision per pairing the user is actually shown: each listing against its own game.
+            vrSettings.AcceptListing(parser, "Game with Steam", steamGame.Id);
+            vrSettings.AcceptListing(parser, "Game Name Match", nameGame.Id);
+            vrSettings.AcceptListing(parser, "Cyberpunk 2077", fuzzyGame.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(steamGame.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -629,7 +668,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             // Should use existing tag, not create duplicate
@@ -657,7 +698,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(3));
@@ -870,7 +913,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -892,7 +937,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -914,7 +961,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -938,7 +987,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -962,7 +1013,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -1010,7 +1063,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -1162,7 +1217,12 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            // The pairing the rules refuse is not offered, so nobody can have accepted it. Accepting the
+            // listing for 'Half-Life 2: VR Mod' as well would invent that answer - and then the tag the
+            // test expects to be absent is put on by the decision, not by the matcher.
+            vrSettings.AcceptListing(parser, "Half-Life 2", hl2Game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(hl2Game.TagIds, Is.Not.Null.With.Count.EqualTo(2),
@@ -1196,7 +1256,10 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            // See the Half-Life 2 test: the sequel is never offered, so it gets no answer of its own.
+            vrSettings.AcceptListing(parser, "The Evil Within", tewGame.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(tewGame.TagIds, Is.Not.Null.With.Count.EqualTo(2),
@@ -1222,7 +1285,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -1262,7 +1327,12 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            // Each listing against the game its own App ID names. Accepting both listings for both games
+            // is a different question - and answering it is what would give RE3 three tags.
+            vrSettings.AcceptListing(parser, "Resident Evil 3", re3.Id);
+            vrSettings.AcceptListing(parser, "Resident Evil 7 Biohazard", re7.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(re3.TagIds, Is.Not.Null.With.Count.EqualTo(2), "RE3 should get Full Motion Controls");
@@ -1295,7 +1365,10 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListing(parser, "Wolfenstein: The Old Blood", oldBlood.Id);
+            vrSettings.AcceptListing(parser, "Wolfenstein: Youngblood", youngBlood.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(oldBlood.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -1342,7 +1415,12 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            // Chess Ultra and GRID have no listing in the source at all: there is no pairing here for a
+            // user to have answered, so they stay unseeded and the test still asks the plugin to choose.
+            vrSettings.AcceptListing(parser, "Ghostrunner", shouldMatch1.Id);
+            vrSettings.AcceptListing(parser, "Dead Island 2", shouldMatch2.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(shouldMatch1.TagIds, Is.Not.Null.With.Count.EqualTo(2), "Ghostrunner should be tagged");
@@ -1372,7 +1450,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.ScanGameAsync(game).GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -1398,7 +1478,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.ScanGameAsync(game).GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(3));
@@ -1449,7 +1531,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.ScanGameAsync(game).GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));
@@ -1483,7 +1567,9 @@ namespace PlayniteVRMods.Tests.Integration
             });
             _registry.Register(parser);
 
-            var service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            var vrSettings = new VrModTagSettings();
+            vrSettings.AcceptListingsFrom(parser, game.Id);
+            var service = new VrModTagService(_mockApi, vrSettings, new NullLogger(), _registry);
             service.ScanGameAsync(game).GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null.With.Count.EqualTo(2));

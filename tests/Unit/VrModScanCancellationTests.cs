@@ -306,6 +306,9 @@ namespace PlayniteVRMods.Tests.Unit
             _registry.Register(healthy);
 
             var settings = new VrModTagSettings();
+            // The healthy source's pairing is one the user agreed to; the assertion below is that a
+            // budget cut on the OTHER source does not take that answer away.
+            settings.AcceptListingsFrom(healthy, game.Id);
             var service = new VrModTagService(_mockApi, settings, new NullLogger(), _registry)
             {
                 ScanWallClockBudget = TimeSpan.FromMilliseconds(400)   // test seam for the 10-minute default

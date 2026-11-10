@@ -25,6 +25,7 @@ namespace PlayniteVRMods.Tests.Unit
         private IPlayniteAPI _mockApi = null!;
         private VrModTagService _service = null!;
         private VrModSourceRegistry _registry = null!;
+        private VrModTagSettings _settings = null!;
 
         [SetUp]
         public void SetUp()
@@ -40,7 +41,8 @@ namespace PlayniteVRMods.Tests.Unit
             _mockApi.Database.Returns(_mockDb);
 
             _registry = new VrModSourceRegistry();
-            _service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            _settings = new VrModTagSettings();
+            _service = new VrModTagService(_mockApi, _settings, new NullLogger(), _registry);
         }
 
         // --- Duplicate matching: every same-name game matches one source entry -----------
@@ -59,6 +61,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, steam.Id, epic.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var categoryTag = _tags.Items.Single(t => t.Name == VrModCategories.TagNameFor("UEVR"));

@@ -69,17 +69,22 @@ namespace PlayniteVRMods.Tests.Unit
         [Test]
         public void GameAddedWhileRunning_IsScannedThroughTheLibraryEvent()
         {
-            var service = CreateService();
-            _registry.Register(new TestParser("src-event", new[]
+            var settings = new VrModTagSettings();
+            var parser = new TestParser("src-event", new[]
             {
                 new VrModEntry { GameName = "Vampyr", Category = "UEVR" }
-            }));
+            });
+            _registry.Register(parser);
+            var service = CreateService(settings);
 
             // Startup: the library is empty, so the baseline contains nothing to skip.
             service.SeedKnownGames();
 
             // The user adds a game: Playnite writes the row, then announces it on the collection.
             var game = new Game("Vampyr") { TagIds = new List<Guid>() };
+            // The pairing is agreed before it arrives: what this test is about is the TRIGGER - a scan
+            // that fires on the event - and a scan only tags a pairing somebody said yes to.
+            settings.AcceptListingsFrom(parser, game.Id);
             _games.Items.Add(game);
             _games.RaiseItemCollectionChanged(addedItems: new[] { game });
 
@@ -96,16 +101,19 @@ namespace PlayniteVRMods.Tests.Unit
         [Test]
         public void GameAddedBeforeTheBaselineIsSeeded_IsStillScanned()
         {
-            var service = CreateService();
-            // Playnite raises collection events during its own startup import, before
-            // OnApplicationStarted runs SeedKnownGames.
-            service.SubscribeToLibraryChanges();
-            _registry.Register(new TestParser("src-event", new[]
+            var settings = new VrModTagSettings();
+            var parser = new TestParser("src-event", new[]
             {
                 new VrModEntry { GameName = "Blade & Sorcery", Category = "UEVR" }
-            }));
+            });
+            // Playnite raises collection events during its own startup import, before
+            // OnApplicationStarted runs SeedKnownGames.
+            var service = CreateService(settings);
+            service.SubscribeToLibraryChanges();
+            _registry.Register(parser);
 
             var game = new Game("Blade & Sorcery") { TagIds = new List<Guid>() };
+            settings.AcceptListingsFrom(parser, game.Id);
             _games.Items.Add(game);
             _games.RaiseItemCollectionChanged(addedItems: new[] { game });
 
@@ -121,13 +129,15 @@ namespace PlayniteVRMods.Tests.Unit
         [Test]
         public void GameAddedBurst_SettlesIntoASingleBatchScan()
         {
-            var service = CreateService(debounceMs: 1500);   // the burst stays inside one window
-            _registry.Register(new TestParser("src-event", new[]
+            var settings = new VrModTagSettings();
+            var parser = new TestParser("src-event", new[]
             {
                 new VrModEntry { GameName = "Alpha Game", Category = "UEVR" },
                 new VrModEntry { GameName = "Beta Game", Category = "UEVR" },
                 new VrModEntry { GameName = "Gamma Game", Category = "UEVR" }
-            }));
+            });
+            _registry.Register(parser);
+            var service = CreateService(settings, debounceMs: 1500);   // the burst stays inside one window
             service.SeedKnownGames();
 
             var games = new[]
@@ -136,6 +146,7 @@ namespace PlayniteVRMods.Tests.Unit
                 new Game("Beta Game") { TagIds = new List<Guid>() },
                 new Game("Gamma Game") { TagIds = new List<Guid>() }
             };
+            settings.AcceptListingsFrom(parser, games.Select(g => g.Id).ToArray());
             foreach (var g in games)
             {
                 _games.Items.Add(g);
@@ -180,14 +191,17 @@ namespace PlayniteVRMods.Tests.Unit
         [Test]
         public void Dispose_DetachesTheLibraryEventHandler()
         {
-            var service = CreateService();
-            _registry.Register(new TestParser("src-event", new[]
+            var settings = new VrModTagSettings();
+            var parser = new TestParser("src-event", new[]
             {
                 new VrModEntry { GameName = "Vampyr", Category = "UEVR" }
-            }));
+            });
+            _registry.Register(parser);
+            var service = CreateService(settings);
             service.SeedKnownGames();
 
             var first = new Game("Vampyr") { TagIds = new List<Guid>() };
+            settings.AcceptListingsFrom(parser, first.Id);   // the pre-dispose game is one the user agreed to
             _games.Items.Add(first);
             _games.RaiseItemCollectionChanged(addedItems: new[] { first });
             Assert.That(SpinWait.SpinUntil(() => first.TagIds.Count > 0, TimeSpan.FromSeconds(20)), Is.True);
@@ -212,17 +226,22 @@ namespace PlayniteVRMods.Tests.Unit
         [Test]
         public void PlaceholderGameRenamedByTheUser_IsScannedUnderItsNewName()
         {
-            var service = CreateService();
-            _registry.Register(new TestParser("src-event", new[]
+            var settings = new VrModTagSettings();
+            var parser = new TestParser("src-event", new[]
             {
                 new VrModEntry { GameName = "Heavy Metal FAKK 2 VR", Category = "UEVR" }
-            }));
+            });
+            _registry.Register(parser);
+            var service = CreateService(settings);
             service.SeedKnownGames();
 
             // Live-verified against Playnite 10.62: opening "Add game → Manually…" writes a game
             // literally named "New Game" right away, and that is what the collection announces. The
             // title the user types is saved later, as an update.
             var placeholder = new Game("New Game") { TagIds = new List<Guid>() };
+            // Keyed by the game Id, so the yes survives the rename: this test asks whether the rename
+            // triggers a scan that finds it, not whether the pairing was agreed.
+            settings.AcceptListingsFrom(parser, placeholder.Id);
             _games.Items.Add(placeholder);
             _games.RaiseItemCollectionChanged(addedItems: new[] { placeholder });
 
@@ -272,14 +291,19 @@ namespace PlayniteVRMods.Tests.Unit
         [Test]
         public void NewGameScan_LogsNothingPerUnrelatedSourceEntry()
         {
-            var service = CreateService();
+            var settings = new VrModTagSettings();
             var entries = new List<VrModEntry> { new VrModEntry { GameName = "Vampyr", Category = "UEVR" } };
             for (var i = 0; i < 40; i++)
                 entries.Add(new VrModEntry { GameName = $"Unrelated Source Entry {i} With A Long Title", Category = "UEVR" });
-            _registry.Register(new TestParser("src-event", entries));
+            var parser = new TestParser("src-event", entries);
+            _registry.Register(parser);
+            var service = CreateService(settings);
             service.SeedKnownGames();
 
             var game = new Game("Vampyr") { TagIds = new List<Guid>() };
+            // Only the Vampyr pairing is agreed. The 40 unrelated entries stay undecided on purpose - they
+            // are the near misses whose log volume this test measures.
+            settings.AcceptListing(parser, "Vampyr", game.Id);
             _games.Items.Add(game);
             _games.RaiseItemCollectionChanged(addedItems: new[] { game });
 
@@ -330,12 +354,14 @@ namespace PlayniteVRMods.Tests.Unit
         [Test]
         public void RenameBatchAboveThePerGameLimitIsHandledByOneFullLibraryScan()
         {
-            var service = CreateService();
-            _registry.Register(new TestParser("src-bulk", new[]
+            var settings = new VrModTagSettings();
+            var parser = new TestParser("src-bulk", new[]
             {
                 new VrModEntry { GameName = "Half Life 2 VR", Category = "UEVR" },
                 new VrModEntry { GameName = "BoneKing VR Edition", Category = "UEVR" }
-            }));
+            });
+            _registry.Register(parser);
+            var service = CreateService(settings);
             service.SubscribeToLibraryChanges();
             service.SeedKnownGames();
 
@@ -348,6 +374,8 @@ namespace PlayniteVRMods.Tests.Unit
                 var name = i == 0 ? "Half Life 2 VR" : i == 1 ? "BoneKing VR Edition" : $"Renamed Library Entry {i} With A Long Title";
                 games.Add(new Game(name) { TagIds = new List<Guid>() });
             }
+            settings.AcceptListing(parser, "Half Life 2 VR", games[0].Id);
+            settings.AcceptListing(parser, "BoneKing VR Edition", games[1].Id);
             foreach (var g in games) _games.Items.Add(g);
             _games.RaiseItemUpdated(games.Select(g => (oldData: new Game($"Old Sorting Name {g.Id}") { Id = g.Id }, newData: g)));
 
@@ -362,11 +390,13 @@ namespace PlayniteVRMods.Tests.Unit
         [Test]
         public void RenameBatchWithinThePerGameLimitStaysScopedToThoseGames()
         {
-            var service = CreateService();
-            _registry.Register(new TestParser("src-bulk", new[]
+            var settings = new VrModTagSettings();
+            var parser = new TestParser("src-bulk", new[]
             {
                 new VrModEntry { GameName = "Half Life 2 VR", Category = "UEVR" }
-            }));
+            });
+            _registry.Register(parser);
+            var service = CreateService(settings);
             service.SubscribeToLibraryChanges();
             service.SeedKnownGames();
 
@@ -375,6 +405,7 @@ namespace PlayniteVRMods.Tests.Unit
                 new Game("Half Life 2 VR") { TagIds = new List<Guid>() },
                 new Game("Some Other Renamed Entry") { TagIds = new List<Guid>() }
             };
+            settings.AcceptListing(parser, "Half Life 2 VR", games[0].Id);
             foreach (var g in games) _games.Items.Add(g);
             _games.RaiseItemUpdated(games.Select(g => (oldData: new Game($"Old Sorting Name {g.Id}") { Id = g.Id }, newData: g)));
 
