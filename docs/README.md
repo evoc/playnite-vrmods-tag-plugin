@@ -35,8 +35,8 @@ and adds a link to the mod page, so VR-playable games are always easy to find.
 
 | Page | What it covers |
 | --- | --- |
-| [Getting started](getting-started.md) | Installation, what happens on install and first scan, automatic scans, the bell notification, updating, uninstalling. |
+| [Getting started](getting-started.md) | Installation, what happens on install and first scan, automatic scans, the plugin's two menus, the bell notification, updating, uninstalling. |
 | [Review dialog](review.md) | Every column, the status values, accept/reject, filters, sorting, the columns menu, bulk actions, and resetting all decisions. |
 | [Settings](settings.md) | The Sources grid column by column, source health, the fuzzy-match threshold, scan interval, cache duration, and the Help button. |
-| [Tags & data sources](tags.md) | Every tag the plugin can apply, what it means, and the community sources this plugin is built on. |
+| [Tags & data sources](tags.md) | Every tag the plugin can apply, what it means, how a tag comes off again, and the community sources this plugin is built on. |
 | [For developers](for-developers.md) | Where the developer documentation lives. |

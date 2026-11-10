@@ -3,13 +3,13 @@
 **VRMod Tags** is a Playnite add-on — a metadata provider — that finds
 VR mods, ports and conversions for the games already in your library.
 It reads community-curated sources, matches their listings against
-your games, and tags the games it is confident about; the uncertain
-matches wait in a review dialog until you decide. Accepted games get a
+your games, and asks you about the pairings it finds: nothing is tagged
+until you accept it. Accepted games get a
 `VRMod` tag, the source's own category tags, and a link to the mod page.
 
 ## Features
 
-- **Auto-tagging** — `VRMod` plus category-specific tags (UEVR,
+- **Tags and links for what you accept** — `VRMod` plus category-specific tags (UEVR,
   Depth3D, REFramework, and the source's own framework and status
   vocabulary), and a `Link` to the listing the match came from.
 - **Twelve community sources** — ten enabled by default: PCVR Central,
@@ -26,15 +26,20 @@ matches wait in a review dialog until you decide. Accepted games get a
   *Game*, because the re-release words at the end of a name say which copy it
   is, not which product. A match resting on the App ID alone is a Pending row
   for you to decide, never a tag applied on its own.
-- **A review dialog for the matches it is unsure about** — filter,
+- **A review dialog for every pairing it finds** — filter,
   sort, accept, reject, bulk actions, column control, open the mod page.
-  Statuses are Saved/New (accepted), Rejected, Suggested and Pending.
+  Nothing reaches your library before you save it; an exact-name pairing simply
+  arrives pre-ticked as a yes. Statuses are Saved/New (accepted), Rejected,
+  Suggested and Pending.
 - **Decisions stick** — an accepted or rejected pairing is keyed by the
   listing's identity (its App ID or page URL) and its game, so it survives a
   rename on the site and a rename in your library.
 - **Scans** — at startup, when a game is added or renamed,
   and on a configurable interval, with per-source caching
   and a bell notification when something needs reviewing.
+- **Menus** — **Extensions → VRMod Tags** for a full scan and the settings, and
+  a game's own context menu to check these games for mods, reject the VR mods
+  assigned to them, or reset your decisions for them.
 - **A run log** — what each source returned, what failed and why, per scan.
 - **Clean uninstall** — every tag, link, queued
   change and setting the plugin added is removed.
@@ -59,7 +64,7 @@ changes it makes are part of your Playnite library, not a private store.
   start, the review dialog, the settings page, every tag and
   every source. This is what the plugin's **Help** button opens.
 - [docs/getting-started.md](docs/getting-started.md) — Install,
-  first scan, automatic scans, updating, uninstalling.
+  first scan, automatic scans, the plugin's menus, updating, uninstalling.
 - [docs/review.md](docs/review.md) — Every column and status in the review
   dialog, filters, sorting, bulk actions, resetting decisions.
 - [docs/settings.md](docs/settings.md) — The sources grid column by column,
@@ -178,8 +183,8 @@ Matcher][matcher] (SW-Fan1138), and VRMod Tags (this plugin).
   first; optional review for similar-title matches
 - PCVR Central Matcher — Applies on Sync; you create
   the `PCVR-Mod` and `PCVR-Native` tags yourself first
-- VRMod Tags — Tags confident matches automatically;
-  everything else waits in the review dialog
+- VRMod Tags — Writes nothing until you accept it;
+  every pairing waits in the review dialog, and a refusal is remembered
 
 #### Tag vocabulary
 

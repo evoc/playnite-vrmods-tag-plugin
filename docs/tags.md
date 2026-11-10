@@ -50,6 +50,32 @@ full-motion *and* a UEVR profile yields `VRMod Full Motion` *and*
 `VRMod UEVR`). A game's tag set is the union of every tag yielded by
 every matched mod, so a game can carry several category tags at once.
 
+## How a tag comes off again
+
+Your saved decisions are the state; the tags and the links to mod
+pages are what those decisions put into your library. A tag this
+plugin owns comes off a game as soon as **nothing backs it any
+more** — the same rule on every path, whether the change came from
+you or from a scan. So there are as many ways to take a tag off as
+there are to change what backs it:
+
+| What you do | What comes off |
+| --- | --- |
+| Reject a pairing in the [review dialog](review.md) and **Save** | That mod's category and facet tags, and its link to the mod page. The umbrella `VRMod` tag goes as well if no other VR mod tag is left on the game. Other accepted mods keep their tags. |
+| Set a decided row back to *Pending* and **Save** | The same tags come off, and the saved decision is cleared — the pairing is offered for review again. |
+| **Reset my decisions for this game...** (a game's right-click menu → **VRMod Tags**) | Every tag and link the plugin put on those games, and the decisions behind them. The next scan asks again. |
+| **Reject all assigned VR mods on this game...** (the same menu) | The assigned mods' tags and links. The decisions stay, as refusals, so those pairings are not offered again. |
+| **Reset all decisions** (review dialog) → **Reset and remove tags** | Every `VRMod*` tag in your library. The **Reset only** option clears the decisions and leaves every tag where it is. |
+| Turn a source off in [settings](settings.md) | Playnite asks *Remove the VRMod tags that came from "…"?* Tags another source also backs are kept. **Cancel** — or closing that question — leaves them all. |
+| Nothing at all | When a mod's listing disappears from every source, the next full scan takes the tags it used to back off the game. A tag never outlives the match behind it. (If a source failed during that scan, the plugin removes nothing — it keeps the tags rather than guess. See [when a source is down](getting-started.md#when-a-source-is-down-or-you-cancel-a-scan).) |
+
+**What counts as "ours" is the tag's name.** The plugin only ever
+removes a tag named `VRMod` or `VRMod …`, and it never relies on a
+tag id. So a tag you made yourself that happens to carry one of
+those names cannot be told apart from the plugin's own, and goes
+with them; every other name is untouched — your own tags and links
+stay yours.
+
 ## Data sources
 
 This plugin is built on the data and curation of these

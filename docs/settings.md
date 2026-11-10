@@ -12,13 +12,18 @@ if you don't see the plugin there, you're in the wrong window.
 
 - **Games with VR mods: N** — how many games in
   your library currently carry a `VRMod` tag.
-- **Full Scan** — checks every enabled source and applies the matches
-  right away, without a dialog (the fast "update my tags" action).
+- **Full Scan** — checks every enabled source and re-applies what your saved
+  decisions back, without a dialog (the fast "update my tags" action). Pairings
+  you never decided are not applied by it; they wait in the review dialog. When
+  it cannot start (another scan is still running, or no source is enabled) or
+  does not finish, a window says so; `extensions.log` holds the cause.
 - **Review VR Mods** — opens the review dialog for every matched game
   (new and already-decided) so you can review or change your decisions.
   It opens instantly from the data of your last scan — it does not
   rescan. Only when no scan data is available yet (right after Playnite
-  started, before the first scan finished) it runs a scan first.
+  started, before the first scan finished) it runs a scan first. When
+  nothing in the sources matches a game of yours, a window says that
+  instead of an empty dialog.
 - **Help** (top right) — opens the user manual that ships inside the installed
   package, so the documentation always matches the version you have installed.
 
@@ -38,8 +43,10 @@ One row per data source:
 
 A source that fails (red) never takes other tags down with
 it: the scan continues for the healthy sources and skips
-removing any stale tags that scan, so nothing is lost while a
-source is down. The next healthy scan restores normal cleanup.
+removing any stale tags and any stale source links that scan, so
+nothing is lost while a source is down. The next healthy scan
+restores normal cleanup. What the healthy sources found is still
+applied — see [when a source is down](getting-started.md#when-a-source-is-down-or-you-cancel-a-scan).
 
 **VorpX** and **Luke Ross (R.E.A.L. VR)** are **opt-in** sources: they
 are **disabled by default**, so on a fresh install their **Active**
