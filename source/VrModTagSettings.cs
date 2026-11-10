@@ -429,7 +429,14 @@ namespace Playnite.VRMods
             Dictionary<string, string>? timestamps,
             Dictionary<string, string>? tags)
         {
-            if (decisions != null) _matchDecisions = decisions;
+            if (decisions != null)
+            {
+                _matchDecisions = decisions;
+                // The game-centred views are derived from this map: drop them, and the next reader
+                // rebuilds from the instance just published (see EnsureDecisionIndex).
+                _decisionStateByGame = null;
+                _acceptedDecisionKeysByGame = null;
+            }
             if (timestamps != null) _decisionTimestamps = timestamps;
             if (tags != null) _sourceTagsByDecision = tags;
         }
@@ -470,7 +477,113 @@ namespace Playnite.VRMods
         public Dictionary<string, string> MatchDecisions
         {
             get => _matchDecisions ??= new();
-            set => _matchDecisions = value;
+            set
+            {
+                _matchDecisions = value;
+                // The load path is not under _decisionSync; see EnsureDecisionIndex for why losing
+                // an index build here is harmless rather than merely tolerated.
+                _decisionStateByGame = null;
+                _acceptedDecisionKeysByGame = null;
+            }
+        }
+
+        /// <summary>
+        /// What the stored decisions say about one Playnite game, as two game-centred views over
+        /// <see cref="MatchDecisions"/>: a state per game, and the Accepted keys per game. Built on
+        /// demand from the published map and dropped whenever that map is published over.
+        ///
+        /// They exist because the game context menu asks "does this game have a saved mod, and does it
+        /// have a decision" on every right-click, and the map is keyed the other way round - by source
+        /// listing first, game last. Answering that from the map means splitting every stored key on
+        /// every right-click. The index answers it in two dictionary lookups, and it is built at most
+        /// once per change to the decisions, not once per question: a steady-state scan changes no
+        /// decision, publishes nothing (see <see cref="_decisionSync"/>), and so drops nothing.
+        ///
+        /// Rebuilds run under <see cref="_decisionSync"/>, the lock every writer of the map holds.
+        /// The one writer outside that lock is Playnite's deserializer through the
+        /// <see cref="MatchDecisions"/> setter: it swaps the map reference (which cannot disturb a
+        /// rebuild enumerating the instance it started from) and clears these two fields. Worst case a
+        /// rebuild finishes against the map it read and is discarded unused a moment later - wasted
+        /// work at startup, never a wrong answer, because a reader only ever consults an index built
+        /// under the lock from a map that was published under the lock.
+        /// </summary>
+        private Dictionary<Guid, GameDecisionState>? _decisionStateByGame;
+        private Dictionary<Guid, List<string>>? _acceptedDecisionKeysByGame;
+
+        /// <summary>
+        /// Builds the two game-centred views, unless they already exist. Callers hold
+        /// <see cref="_decisionSync"/>. Keys with no Guid tail - the legacy name-keyed decisions still
+        /// sitting in users' config.json, and corrupt entries - are skipped: no game can be asked about
+        /// them, and <see cref="RemoveLegacyDecisions"/> retires them.
+        /// </summary>
+        private void EnsureDecisionIndex()
+        {
+            if (_decisionStateByGame != null)
+                return;
+
+            var states = new Dictionary<Guid, GameDecisionState>();
+            var acceptedKeys = new Dictionary<Guid, List<string>>();
+            foreach (var kvp in Decisions())
+            {
+                if (!VrModNameMatcher.TryGetDecisionGameId(kvp.Key, out var gameId))
+                    continue;
+
+                // An unparseable stored value counts as Pending, exactly as GetDecisionByKey reports it,
+                // so the index and the key-centred API cannot disagree about the same entry.
+                var state = kvp.Value switch
+                {
+                    nameof(MatchDecision.Accepted) => GameDecisionState.HasAccepted,
+                    nameof(MatchDecision.Rejected) => GameDecisionState.HasRejected,
+                    _ => GameDecisionState.HasPending
+                };
+
+                states[gameId] = states.TryGetValue(gameId, out var existing) ? existing | state : state;
+                if (state == GameDecisionState.HasAccepted)
+                {
+                    if (!acceptedKeys.TryGetValue(gameId, out var keys))
+                        acceptedKeys[gameId] = keys = new List<string>();
+                    keys.Add(kvp.Key);
+                }
+            }
+
+            _decisionStateByGame = states;
+            _acceptedDecisionKeysByGame = acceptedKeys;
+        }
+
+        /// <summary>
+        /// The decisions this game has stored, in two dictionary lookups. The game context menu's
+        /// question: <see cref="GameDecisionState.HasAccepted"/> is what "Reject my VR mods" needs,
+        /// and any state at all is what "Reset my decisions" needs.
+        /// </summary>
+        /// <param name="gameId">The Playnite game's stable Id.</param>
+        /// <returns>What is stored; <see cref="GameDecisionState.None"/> when nothing is.</returns>
+        public GameDecisionState GetDecisionStateForGame(Guid gameId)
+        {
+            lock (_decisionSync)
+            {
+                EnsureDecisionIndex();
+                return _decisionStateByGame!.TryGetValue(gameId, out var state)
+                    ? state
+                    : GameDecisionState.None;
+            }
+        }
+
+        /// <summary>
+        /// The keys of this game's Accepted decisions - the pairings that currently assign a source
+        /// listing to it. The list belongs to the index and is never mutated after it is built (a
+        /// change drops the whole index instead), so handing it out is safe; do not write to it.
+        /// </summary>
+        /// <param name="gameId">The Playnite game's stable Id.</param>
+        /// <returns>The accepted keys, empty when the game has none.</returns>
+        public IReadOnlyList<string> GetAcceptedDecisionKeysForGame(Guid gameId)
+        {
+            lock (_decisionSync)
+            {
+                EnsureDecisionIndex();
+                return _acceptedDecisionKeysByGame!.TryGetValue(gameId, out var keys)
+                    ? keys
+                    : Array.Empty<string>();
+            }
         }
 
         /// <summary>
@@ -1185,9 +1298,10 @@ namespace Playnite.VRMods
         }
 
         /// <summary>
-        /// Command for the "Full Scan" button: runs a full scan that auto-applies the matches
-        /// (accepted re-applied, pending tagged) and shows no dialog. Enabled only when not
-        /// currently scanning.
+        /// Command for the "Full Scan" button: runs a full scan with no dialog. It writes what the
+        /// stored decisions say (accepted tagged, rejected left alone) and never writes the matches the
+        /// scan just found; a pairing the user never decided is held for the review dialog. Enabled only
+        /// when not currently scanning.
         /// </summary>
         public ICommand FullScanCommand { get; }
 
@@ -1648,5 +1762,26 @@ namespace Playnite.VRMods
             UpdateSourceRows();
             RefreshDecisionLists();
         }
+    }
+
+    /// <summary>
+    /// What a Playnite game has stored in the plugin's decisions, without naming the pairings: the
+    /// flags are OR-ed over everything the game appears in, so a game with one accepted and one
+    /// rejected listing carries both. Built by <see cref="VrModTagSettings.GetDecisionStateForGame"/>.
+    /// </summary>
+    [Flags]
+    public enum GameDecisionState
+    {
+        /// <summary>Nothing is stored about this game: it was never reviewed and never scanned onto a listing.</summary>
+        None = 0,
+
+        /// <summary>A listing is assigned to it - the plugin's tags and links on that game came from here.</summary>
+        HasAccepted = 1,
+
+        /// <summary>A pairing was voted down: it is stored so no later scan offers it again.</summary>
+        HasRejected = 2,
+
+        /// <summary>A pairing is recorded and undecided. Written by nothing today; see the review dialog's Save.</summary>
+        HasPending = 4
     }
 }

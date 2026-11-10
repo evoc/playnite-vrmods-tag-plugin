@@ -337,11 +337,17 @@ namespace PlayniteVRMods.Tests.Unit
             var game = AddGame("Resident Evil 4", "https://store.steampowered.com/app/2443190/Resident_Evil_4");
             var listing = new VrModEntry { GameName = "Resident Evil 4", Category = "VorpX" };
 
-            NewService(new VrModTagSettings(), new StubParser(SourceId, listing))
-                .RunFullScanAsync().GetAwaiter().GetResult();
+            var rows = RunFullScan(NewService(new VrModTagSettings(), new StubParser(SourceId, listing)), reviewAll: true);
+            var row = rows.FirstOrDefault(r => r.PlayniteGame.Id == game.Id);
 
-            Assert.That(TagNames(game), Does.Contain(VrModCategories.TagNameFor(VrModCategories.VorpX)),
-                $"silence about App IDs is not disagreement; that game ended up with [{string.Join(", ", TagNames(game))}]");
+            // Seeding an accepted decision here would prove nothing: a decided pair is not vetoed, so the
+            // test would pass with a veto that fires on silence. What the veto has to be checked against
+            // is the reason the pairing carries - the disagreement wording is only ever added when one
+            // side names an App ID the other side contradicts.
+            Assert.That(row, Is.Not.Null,
+                $"silence about App IDs is not disagreement; this pairing never reached a row at all");
+            Assert.That(row!.Reason, Does.Not.Contain("App IDs disagree"),
+                $"silence about App IDs is not disagreement; the row said: {row.Reason}");
         }
 
         [Test]
@@ -353,11 +359,14 @@ namespace PlayniteVRMods.Tests.Unit
             var game = AddGame("Resident Evil 4");
             var listing = new VrModEntry { GameName = "Resident Evil 4", SteamAppId = "434120", Category = "VorpX" };
 
-            NewService(new VrModTagSettings(), new StubParser(SourceId, listing))
-                .RunFullScanAsync().GetAwaiter().GetResult();
+            var rows = RunFullScan(NewService(new VrModTagSettings(), new StubParser(SourceId, listing)), reviewAll: true);
+            var row = rows.FirstOrDefault(r => r.PlayniteGame.Id == game.Id);
 
-            Assert.That(TagNames(game), Does.Contain(VrModCategories.TagNameFor(VrModCategories.VorpX)),
-                $"silence about App IDs is not disagreement; that game ended up with [{string.Join(", ", TagNames(game))}]");
+            // See the test above: an accepted decision would step over the veto this checks for.
+            Assert.That(row, Is.Not.Null,
+                "a library game with no store link is still the game a listing names; it reached no row");
+            Assert.That(row!.Reason, Does.Not.Contain("App IDs disagree"),
+                $"the game saying nothing about App IDs is not disagreement; the row said: {row.Reason}");
         }
 
         [Test]

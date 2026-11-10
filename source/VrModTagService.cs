@@ -28,7 +28,8 @@ namespace Playnite.VRMods
     /// Matching pipeline (for each VR mod entry from each source):
     ///   1. Check Steam App ID match (exact, preferred)
     ///   2. Check normalized name match (Levenshtein similarity >= threshold)
-    ///   3. Check user's decision: Accepted -> apply, Rejected -> skip, Pending -> review or auto-apply
+    ///   3. Check user's decision: Accepted -> apply, Rejected -> skip, Pending -> hold for the review
+    ///     dialog; a scan without a dialog holds it too, so nothing is ever written unasked
     ///   4. Apply category tag and umbrella "VRMod" tag to matched games
     ///
     /// Caching:
@@ -1716,35 +1717,29 @@ namespace Playnite.VRMods
                                 var score = MatchScoreFor(entry, game);
                                 if (score >= _settings.FuzzyMatchThreshold)
                                 {
-                                    // The threshold auto-apply policy stays exactly as it was for every
-                                    // pairing the name rules make. What it must not swallow is a pairing
-                                    // that scores 1.00 only because the two records publish the same
-                                    // Steam App ID: certain about the product, never decided as a mod.
+                                    // Whatever the name rules score, an entry with no stored decision is one
+                                    // the user has never been asked about, and "very likely the same product"
+                                    // is not consent to write a claim into his library. Nothing is applied
+                                    // here in either mode: the pairing is held, counted, and put in front of
+                                    // him - as dialog rows when a dialog is open, as the scan summary's
+                                    // pending count when it is not. He decides by the mod name in the review
+                                    // grid, which the name matching cannot show him.
                                     var nameScore = NameScoreFor(entry, game);
-                                    var certainByAppIdOnly = score >= 1.0f && nameScore < 1.0f;
-                                    if (reviewCallback == null && !certainByAppIdOnly)
+                                    if (reviewCallback == null)
                                     {
-                                        var appliedPending = ApplyEntryTags(game, entry);
-                                        AddExpectedTags(game.Id, appliedPending);
-                                        BumpRunStats(sourceId, appliedPending.Count, game.Id, false);
-                                        currentMatchedGames.Add(game.Id);
-                                        entryStats.Matches++;
-                                        statsBySource[sourceId] = entryStats;
-                                        _logger.Debug($"VRMod Tag Service: Auto-applied (pending, no review) '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}' ({tagName})");
-                                    }
-                                    else if (reviewCallback == null)
-                                    {
-                                        // No review dialog open, and applying it is not ours to do: hold
-                                        // it as pending review. Collected in pendingMatches so it is
-                                        // counted, reported, and kept out of stale-tag removal; the next
-                                        // Scan & Review puts it in front of the user.
                                         pendingMatches.Add(MakeReviewMatch(sourceId, entry, game, score, MatchDecision.Pending));
                                         entryStats.Matches++;
                                         statsBySource[sourceId] = entryStats;
-                                        _lastSuggestions ??= new List<(string SourceName, string EntryName, string GameName, string Reason)>();
-                                        _lastSuggestions.Add((sourceId, entry.GameName, game.Name,
-                                            "shared Steam App ID; held for review until you accept it"));
-                                        _logger.Debug($"VRMod Tag Service: App-ID match held for review (not applied): '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}'");
+                                        // The App-ID pairing is the one worth naming: the two names look
+                                        // unrelated, so a user reading the pending count cannot guess from
+                                        // them that both records publish the same Steam product.
+                                        if (score >= 1.0f && nameScore < 1.0f)
+                                        {
+                                            _lastSuggestions ??= new List<(string SourceName, string EntryName, string GameName, string Reason)>();
+                                            _lastSuggestions.Add((sourceId, entry.GameName, game.Name,
+                                                "shared Steam App ID; held for review until you accept it"));
+                                            _logger.Debug($"VRMod Tag Service: App-ID match held for review (not applied): '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}'");
+                                        }
                                     }
                                     else
                                     {
@@ -2187,7 +2182,59 @@ namespace Playnite.VRMods
         /// <returns>True if the games were scanned; false if the scan was not run (empty batch,
         /// a scan already held the single-scan gate, or no sources are enabled) — the caller
         /// (the new-game drain) uses this to re-queue the batch so it is not lost.</returns>
-        public async Task<bool> ScanGamesAsync(IEnumerable<Game> games, System.Threading.CancellationToken cancellationToken = default)
+        public Task<bool> ScanGamesAsync(IEnumerable<Game> games, System.Threading.CancellationToken cancellationToken = default)
+            => ScanGamesCoreAsync(games, null, null, cancellationToken);
+
+        /// <summary>
+        /// Scans only the given games - the game context menu's "Check this game for VR mods..." -
+        /// and returns the review rows for them. The rows come from the cached source listings after
+        /// the scan, so the list holds every status the review dialog shows for those games (assigned,
+        /// rejected, pending, and the near-miss suggestions), not only what this scan found new.
+        /// </summary>
+        /// <param name="games">The selected games.</param>
+        /// <param name="onProgress">Per-game progress report.</param>
+        /// <param name="cancellationToken">Cancellation token for the fetch.</param>
+        /// <returns>The rows for <paramref name="games"/>, or null when the scan did not run
+        /// (the gate is held, or no source is enabled).</returns>
+        public List<VrModReviewMatchEntry>? RunScanForGamesWithReview(IReadOnlyList<Game> games, System.Action<int, int, string>? onProgress = null, System.Threading.CancellationToken cancellationToken = default)
+            => ScanGamesForReviewAsync(games, onProgress, cancellationToken).GetAwaiter().GetResult();
+
+        /// <summary>
+        /// Async body behind <see cref="RunScanForGamesWithReview"/>. Blocks by design
+        /// (see <see cref="RunSingleGameScan"/>); a menu action hands it a background thread.
+        /// </summary>
+        public async Task<List<VrModReviewMatchEntry>?> ScanGamesForReviewAsync(IEnumerable<Game> games, System.Action<int, int, string>? onProgress = null, System.Threading.CancellationToken cancellationToken = default)
+        {
+            var gameList = (games ?? Enumerable.Empty<Game>()).Where(g => g != null).ToList();
+            if (gameList.Count == 0)
+                return null;
+
+            // Rows this scan reported as pending. Only a fallback: after a scan that just fetched,
+            // the cached-listing pass below is the source of the full picture for these games.
+            var reported = new List<VrModReviewMatchEntry>();
+            var ran = await ScanGamesCoreAsync(gameList, onProgress, batch => reported.AddRange(batch), cancellationToken);
+            if (!ran)
+                return null;
+
+            var ids = new HashSet<Guid>(gameList.Select(g => g.Id));
+            var rows = BuildReviewMatchesFromCache();
+            if (rows == null)
+            {
+                _logger.Info("VRMod Tag Service: Check-scan review: no cached source data after the scan; showing only the matches this scan reported.");
+                return reported;
+            }
+
+            var scoped = rows.Where(r => r.PlayniteGame != null && ids.Contains(r.PlayniteGame.Id)).ToList();
+            _logger.Info($"VRMod Tag Service: Check-scan review: {scoped.Count} row(s) for {gameList.Count} game(s).");
+            return scoped;
+        }
+
+        /// <summary>
+        /// The batch scan body shared by <see cref="ScanGamesAsync"/> (unattended: auto-apply, no
+        /// dialog) and <see cref="ScanGamesForReviewAsync"/> (attended: collect the pending matches
+        /// and show them). reviewCallback null means auto-apply.
+        /// </summary>
+        private async Task<bool> ScanGamesCoreAsync(IEnumerable<Game> games, System.Action<int, int, string>? onProgress, System.Action<List<VrModReviewMatchEntry>>? reviewCallback, System.Threading.CancellationToken cancellationToken)
         {
             var gameList = (games ?? Enumerable.Empty<Game>()).Where(g => g != null).ToList();
             if (gameList.Count == 0)
@@ -2214,8 +2261,12 @@ namespace Playnite.VRMods
             // scan; each game's tags/links are applied inside it.
             using (var buffer = _api.Database.BufferedUpdate())
             {
+                var done = 0;
                 foreach (var game in gameList)
-                    ScanGameCore(game, allEntries, failedSources, null);
+                {
+                    onProgress?.Invoke(++done, gameList.Count, SafeLogText(game.Name));
+                    ScanGameCore(game, allEntries, failedSources, reviewCallback);
+                }
             }
 
             _logger.Info($"VRMod Tag Service: New-game scan complete for {gameList.Count} game(s).");
@@ -2225,10 +2276,10 @@ namespace Playnite.VRMods
         /// <summary>
         /// The per-game match/apply core shared by <see cref="ScanGameAsync"/> and
         /// <see cref="ScanGamesAsync"/>: matches the game against the (already-fetched) source
-        /// entries, applies/keeps the matched VRMod tags, removes stale ones, and reconciles
-        /// source links. The caller owns the single-scan gate and the database buffered-update
-        /// window. reviewCallback null = auto-apply (no review dialog); otherwise pending
-        /// matches are collected and handed to it.
+        /// entries, applies the tags its ACCEPTED decisions back, takes off what nothing backs, and
+        /// reconciles source links. The caller owns the single-scan gate and the database
+        /// buffered-update window. reviewCallback null = no dialog, so a pairing nobody answered for is
+        /// logged and dropped; otherwise those pairings are handed to it as rows to decide.
         /// </summary>
         private void ScanGameCore(Game game, ConcurrentDictionary<string, ConcurrentBag<VrModEntry>> allEntries, int failedSources, System.Action<List<VrModReviewMatchEntry>>? reviewCallback)
         {
@@ -2284,10 +2335,13 @@ namespace Playnite.VRMods
                             foreach (var q in entry.Qualities) qualityTags.Add(q);
                             foreach (var m in entry.Motions) motionTags.Add(m);
                             foreach (var s in entry.Statuses) statusTags.Add(s);
-                            _logger.Info($"VRMod Tag Service: Auto-applied (accepted) '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}' ({CategoryTagSummary(entry)})");
+                            // Per-match detail goes to Debug, as it does on the per-game path: a full scan
+                            // writes one of these per game per listing, and Playnite's log would drown in it.
+                            // The scan summary is the Info line.
+                            _logger.Debug($"VRMod Tag Service: Auto-applied (accepted) '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}' ({CategoryTagSummary(entry)})");
                             break;
                         case MatchDecision.Rejected:
-                            _logger.Info($"VRMod Tag Service: Auto-skipped (rejected) '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}'");
+                            _logger.Debug($"VRMod Tag Service: Auto-skipped (rejected) '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}'");
                             break;
                         case MatchDecision.Pending:
                             // An App ID match scores as itself: it is not a fuzzy guess, it is the
@@ -2308,12 +2362,10 @@ namespace Playnite.VRMods
 
                                 if (reviewCallback == null)
                                 {
-                                    foreach (var cat in entry.Categories) currentMatchedCategories.Add(cat);
-                                    if (entry.Is6DOF == true) has6DOF = true;
-                                    foreach (var q in entry.Qualities) qualityTags.Add(q);
-                                    foreach (var m in entry.Motions) motionTags.Add(m);
-                                    foreach (var s in entry.Statuses) statusTags.Add(s);
-                                    _logger.Info($"VRMod Tag Service: Auto-applied (pending, no review) '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}' ({CategoryTagSummary(entry)})");
+                                    // No dialog open, and no answer recorded for this pairing either. Not
+                                    // ours to write: the game keeps whatever its saved decisions back and
+                                    // gains nothing from this pass.
+                                    _logger.Info($"VRMod Tag Service: Held '{SafeLogText(entry.GameName)}' -> '{SafeLogText(game.Name)}' for review (never accepted, nothing applied)");
                                 }
                                 else
                                 {
@@ -2376,7 +2428,6 @@ namespace Playnite.VRMods
                 AddTagToGame(game, umbrellaTag);
             }
 
-            var existingVrTagIds = (game.TagIds ?? new List<Guid>()).ToList();
             var currentTagIds = new HashSet<Guid>();
             foreach (var cat in currentMatchedCategories)
             {
@@ -2405,22 +2456,13 @@ namespace Playnite.VRMods
             }
             else
             {
-                var changed = false;
-                foreach (var tagId in existingVrTagIds)
-                {
-                    var tag = GetCachedOrDbTag(tagId);
-                    if (tag != null && VrModCategories.IsPluginTagName(tag.Name) && !currentTagIds.Contains(tagId))
-                    {
-                        game.TagIds?.Remove(tagId);
-                        changed = true;
-                        _logger.Info($"VRMod Tag Service: Removed stale tag '{SafeLogText(tag.Name)}' from '{SafeLogText(game.Name)}'");
-                    }
-                }
-                // Maintain source links for this game (add for saved accepted matches,
-                // remove plugin links that are no longer desired).
-                if (ReconcileSourceLinksCore(game))
-                    changed = true;
-                if (changed)
+                // This scan saw the whole catalogue for this game, so its accepted matches are what
+                // backs the game's plugin tags right now. Anything we own that they do not back comes
+                // off - the same rule every other path uses, from a source going disabled to reset.
+                var (tagsRemoved, linksChanged) = ReconcileOwnedTagsAndLinks(game, currentTagIds);
+                if (tagsRemoved > 0)
+                    _logger.Info($"VRMod Tag Service: Removed {tagsRemoved} stale VRMod tag(s) from '{SafeLogText(game.Name)}'");
+                if (tagsRemoved > 0 || linksChanged)
                     _api.Database.Games.Update(game);
             }
 
@@ -3007,15 +3049,16 @@ namespace Playnite.VRMods
 
         private void AddTagToGame(Game game, Tag tag)
         {
-            if (game.TagIds == null)
-                game.TagIds = new List<Guid>();
-            if (!game.TagIds.Contains(tag.Id))
-            {
-                game.TagIds.Add(tag.Id);
-                // In-place list mutation is not tracked by the database —
-                // Update() is required for the change to persist to games.db.
-                _api.Database.Games.Update(game);
-            }
+            var current = game.TagIds;
+            if (current != null && current.Contains(tag.Id))
+                return;
+
+            var next = current == null ? new List<Guid>() : new List<Guid>(current);
+            next.Add(tag.Id);
+            // The order is deliberate: SetTags is what a game's views listen to, Update() is a
+            // separate listener and the one required for the change to reach games.db.
+            VrModGameTags.SetTags(game, next);
+            _api.Database.Games.Update(game);
         }
 
         /// <summary>
@@ -3130,23 +3173,124 @@ namespace Playnite.VRMods
             _logger.Info("VRMod Tag Service: === End Summary ===");
         }
 
-        private void RemoveStaleTags(HashSet<Guid> currentMatches)
+        /// <summary>
+        /// The game context menu's "Reset my decisions for this game...": forgets the selected games' stored
+        /// decisions, and takes off what those decisions put on the games - their tags and source links - in
+        /// the same action. Those were always two halves of one thing: the tags are the projection of the
+        /// record, so forgetting the record and leaving the tags up leaves a game claiming a mod the plugin
+        /// knows nothing about, which no later scan is obliged to notice (a failed source skips the stale
+        /// pass, and a mod the sources stopped listing never returns to it). The next scan offers the mods
+        /// again, which is the point of the item, and is also the way back from a reject.
+        /// </summary>
+        /// <remarks>
+        /// Decisions are cleared before the games are cleaned, because a game's links are partly kept alive
+        /// by its own recorded decisions - reconciling first would re-earn a link for a decision that is
+        /// about to be deleted. The tag and link work goes through
+        /// <see cref="ReconcileOwnedTagsAndLinks"/>, the one rule, with nothing left to back any of it.
+        ///
+        /// Like the other menu actions this neither fetches nor scans, so it runs without the single-scan
+        /// gate rather than queueing behind a running scan.
+        /// </remarks>
+        /// <param name="games">The selected games. Games outside this set are not touched.</param>
+        /// <param name="onProgress">Optional <c>(current, total, gameName)</c> called once per game.</param>
+        /// <param name="cancellationToken">Checked once per game.</param>
+        /// <returns>The number of games whose tags or links changed.</returns>
+        public int ResetDecisionsForGames(IReadOnlyList<Game>? games, System.Action<int, int, string>? onProgress = null, System.Threading.CancellationToken cancellationToken = default)
         {
-            var vrRelatedTags = _api.Database.Tags.Where(t => VrModCategories.IsPluginTagName(t.Name)).ToList();
-            if (vrRelatedTags.Count == 0)
-                return;
+            var gameList = (games ?? new List<Game>()).Where(g => g != null).ToList();
+            if (gameList.Count == 0)
+                return 0;
 
-            var vrTagIds = new HashSet<Guid>(vrRelatedTags.Select(t => t.Id));
-            if (_tagIdCache != null)
+            _settings.ClearDecisionsForGames(gameList.Select(g => g.Id).ToList());
+
+            var gamesChanged = 0;
+            var current = 0;
+            var ownedTagIds = PluginTagIds();
+            using (_api.Database.BufferedUpdate())
             {
-                foreach (var tagId in _tagIdCache.Keys)
+                foreach (var game in gameList)
                 {
-                    vrTagIds.Add(tagId);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    onProgress?.Invoke(++current, gameList.Count, SafeLogText(game.Name));
+
+                    var (removedCount, linkChanged) = ReconcileOwnedTagsAndLinks(game, keepTagIds: null, ownedTagIds);
+                    if (removedCount > 0 || linkChanged)
+                    {
+                        _api.Database.Games.Update(game);
+                        gamesChanged++;
+                        _logger.Info($"VRMod Tag Service: Reset the decisions of '{SafeLogText(game.Name)}' and removed {removedCount} tag(s){(linkChanged ? " and its source link(s)" : string.Empty)}.");
+                    }
                 }
             }
 
+            _logger.Info($"VRMod Tag Service: Reset {gameList.Count} game(s); {gamesChanged} game(s) had tags or links to clean.");
+            return gamesChanged;
+        }
+
+        /// <summary>
+        /// THE rule for what the plugin may take off a game: a tag this plugin owns comes off when nothing
+        /// backs it any more, and the game's source links are reconciled against its decisions in the same
+        /// pass. Every path that changes or loses track of a game's decisions goes through here - the scan's
+        /// stale pass, the per-facet reconciliation, a source being disabled, a reject, a reset - because
+        /// five copies of the loop is five chances for "what backs a tag" to mean five different things.
+        ///
+        /// It changes the in-memory game only and never persists it: the callers keep their own update
+        /// shape, and the scan paths must not call Update while enumerating the game collection.
+        /// </summary>
+        /// <param name="game">The game to clean.</param>
+        /// <param name="keepTagIds">
+        /// Tags that stay although they are ours. Null means nothing backs any of them, so every owned tag
+        /// on the game comes off - which is what a reset, a reject or a game that dropped out of every match
+        /// means. An empty set means the same thing as a collection; pass null for "no record exists".
+        /// </param>
+        /// <param name="candidateTagIds">Tags considered at all, when the caller can only speak for some of
+        /// them: a disabled source names the tags its own decisions claimed, and must not touch a tag another
+        /// source put there. Null means every tag this plugin owns is a candidate.</param>
+        /// <param name="reconcileLinks">Whether to reconcile the game's source links too. Only the facet
+        /// pass, which changes no decision and so invalidates no link, passes false.</param>
+        /// <returns>How many tags came off, and whether a link changed.</returns>
+        private (int TagsRemoved, bool LinksChanged) ReconcileOwnedTagsAndLinks(
+            Game game,
+            HashSet<Guid>? keepTagIds,
+            HashSet<Guid>? candidateTagIds = null,
+            bool reconcileLinks = true)
+        {
+            var removedCount = 0;
+            var tagIds = game.TagIds;
+            if (tagIds != null && tagIds.Count > 0)
+            {
+                // "Ours" is decided by the tag NAME, never by a tag id seen somewhere: a tag id taken from
+                // a game is not proof the plugin made it, and the ids outlive the games they were made for.
+                var owned = candidateTagIds ?? PluginTagIds();
+                // Collected into a new list rather than shortened where it stands: a game's views
+                // refresh when the tag list is handed over, not when an id vanishes out of the one it
+                // already has (see VrModGameTags). Surviving ids keep their order and duplicates.
+                var kept = new List<Guid>(tagIds.Count);
+                foreach (var tagId in tagIds)
+                {
+                    if (owned.Contains(tagId) && (keepTagIds == null || !keepTagIds.Contains(tagId)))
+                    {
+                        removedCount++;
+                        continue;
+                    }
+
+                    kept.Add(tagId);
+                }
+
+                if (removedCount > 0)
+                    VrModGameTags.SetTags(game, kept);
+            }
+
+            return (removedCount, reconcileLinks ? ReconcileSourceLinksCore(game) : false);
+        }
+
+        private void RemoveStaleTags(HashSet<Guid> currentMatches)
+        {
             var gamesToUpdate = new List<Game>();
             var staleGames = new List<Game>();
+            // Once for the pass, not once per game: this loop walks the whole library, and the tag
+            // database does not change while tags are only ever taken off games.
+            var ownedTagIds = PluginTagIds();
             foreach (var game in _api.Database.Games)
             {
                 if (game.TagIds == null)
@@ -3155,22 +3299,23 @@ namespace Playnite.VRMods
                 if (currentMatches.Contains(game.Id))
                     continue;
 
-                var tagsToRemove = game.TagIds.Where(id => vrTagIds.Contains(id)).ToList();
-                foreach (var tagId in tagsToRemove)
+                // No decision of this game survived the drop-out check above, so nothing backs any tag we
+                // own on it: wipe the lot through the one rule. Links are NOT reconciled here - the clear
+                // below deletes the decisions they are judged against, so the reconcile belongs after it.
+                var (removedCount, _) = ReconcileOwnedTagsAndLinks(game, keepTagIds: null, ownedTagIds, reconcileLinks: false);
+                if (removedCount > 0)
                 {
-                    game.TagIds.Remove(tagId);
-                    _logger.Info($"VRMod Tag Service: Removed stale VRMod tag from '{SafeLogText(game.Name)}' (no longer matched)");
-                }
-                if (tagsToRemove.Count > 0)
-                {
+                    _logger.Info($"VRMod Tag Service: Removed {removedCount} stale VRMod tag(s) from '{SafeLogText(game.Name)}' (no longer matched)");
+
                     // The game dropped out of every match - drop ALL its per-mapping decisions
-                    // (keyed by this game's Id, so a same-name store duplicate is NOT cleared) and
-                    // its stale source links. Deferred to one bulk clear below, not per game:
-                    // ClearDecisionsForGame locates a game's keys by walking the whole decision map,
-                    // so one call per stale game is O(games x stored decisions).
+                    // (keyed by this game's Id, so a same-name store duplicate is NOT cleared).
+                    // Deferred to one bulk clear below, not per game: ClearDecisionsForGame locates a
+                    // game's keys by walking the whole decision map, so one call per stale game is
+                    // O(games x stored decisions).
                     staleGames.Add(game);
-                    gamesToUpdate.Add(game);
                 }
+                if (removedCount > 0)
+                    gamesToUpdate.Add(game);
             }
 
             // Decisions go first, then link reconciliation - the order the per-game loop had. A game's
@@ -3199,40 +3344,19 @@ namespace Playnite.VRMods
             if (expectedTagsByGame.Count == 0)
                 return;
 
-            // Every VRMod-owned tag id, so we only ever touch tags this extension manages.
-            var vrTagIds = new HashSet<Guid>();
-            foreach (var t in _api.Database.Tags)
-            {
-                if (t.Name != null && VrModCategories.IsPluginTagName(t.Name))
-                    vrTagIds.Add(t.Id);
-            }
-            if (_tagIdCache != null)
-            {
-                foreach (var tagId in _tagIdCache.Keys)
-                {
-                    vrTagIds.Add(tagId);
-                }
-            }
-
             foreach (var kvp in expectedTagsByGame)
             {
                 if (_gameIdCache == null || !_gameIdCache.TryGetValue(kvp.Key, out var game))
                     continue;
-                if (game.TagIds == null)
-                    continue;
 
-                var removedAny = false;
-                foreach (var tagId in game.TagIds.ToList())
+                // What the scan still justifies stays; every other tag we own on this game came off. Links
+                // are left alone: this pass changes no decision, so no link it reads has gone stale.
+                var (removedCount, _) = ReconcileOwnedTagsAndLinks(game, kvp.Value, reconcileLinks: false);
+                if (removedCount > 0)
                 {
-                    if (vrTagIds.Contains(tagId) && !kvp.Value.Contains(tagId))
-                    {
-                        game.TagIds.Remove(tagId);
-                        removedAny = true;
-                        _logger.Info($"VRMod Tag Service: Removed VRMod tag from '{SafeLogText(game.Name)}' (no longer listed by a source this scan)");
-                    }
-                }
-                if (removedAny)
+                    _logger.Info($"VRMod Tag Service: Removed {removedCount} VRMod tag(s) from '{SafeLogText(game.Name)}' (no longer listed by a source this scan)");
                     _api.Database.Games.Update(game);
+                }
             }
         }
 
@@ -3286,20 +3410,27 @@ namespace Playnite.VRMods
                     continue;
 
                 var rewritten = false;
-                foreach (var tagId in game.TagIds.ToList())
+                // Written as a new list rather than edited where it stands (see VrModGameTags): a
+                // legacy tag removed in place leaves the game on screen still wearing it.
+                var tagIds = new List<Guid>(game.TagIds.Count);
+                foreach (var tagId in game.TagIds)
                 {
                     if (!replacementById.TryGetValue(tagId, out var rename))
+                    {
+                        tagIds.Add(tagId);
                         continue;
-                    game.TagIds.Remove(tagId);
-                    if (!game.TagIds.Contains(rename.ReplacementTag.Id))
-                        game.TagIds.Add(rename.ReplacementTag.Id);
+                    }
+
                     rewritten = true;
+                    if (!game.TagIds.Contains(rename.ReplacementTag.Id) && !tagIds.Contains(rename.ReplacementTag.Id))
+                        tagIds.Add(rename.ReplacementTag.Id);
                     _logger.Info($"VRMod Tag Service: Replaced '{SafeLogText(rename.LegacyName)}' with '{SafeLogText(rename.CanonicalName)}' on '{SafeLogText(game.Name)}'");
                 }
 
                 if (rewritten)
                 {
                     changedGames++;
+                    VrModGameTags.SetTags(game, tagIds);
                     _api.Database.Games.Update(game);
                 }
             }
@@ -3349,15 +3480,12 @@ namespace Playnite.VRMods
             }
 
             // Precompute the VR tag id set and a name->id map so per-game removal needs no per-tag DB lookups.
-            var vrTagIds = new HashSet<Guid>();
             var nameToTagId = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
             foreach (var t in _api.Database.Tags)
             {
                 if (string.IsNullOrEmpty(t.Name))
                     continue;
                 nameToTagId[t.Name] = t.Id;
-                if (VrModCategories.IsPluginTagName(t.Name))
-                    vrTagIds.Add(t.Id);
             }
 
             // The tag ids an accepted decision's stored baseline resolves to (its category tags + facets).
@@ -3405,37 +3533,12 @@ namespace Playnite.VRMods
                         otherTagIds.Add(id);
                 }
 
-                var tagIds = game.TagIds;
-                var removedCount = 0;
-                if (tagIds != null && tagIds.Count > 0 && !hasOtherAccepted)
-                {
-                    // X was the game's only source → clean-wipe every VRMod tag.
-                    foreach (var tagId in tagIds.ToList())
-                    {
-                        if (vrTagIds.Contains(tagId))
-                        {
-                            tagIds.Remove(tagId);
-                            removedCount++;
-                        }
-                    }
-                }
-                else if (tagIds != null && tagIds.Count > 0)
-                {
-                    // Shared game → remove only the tags X backed that no other source still backs.
-                    foreach (var tagId in tagIds.ToList())
-                    {
-                        if (xTagIds.Contains(tagId) && !otherTagIds.Contains(tagId))
-                        {
-                            tagIds.Remove(tagId);
-                            removedCount++;
-                        }
-                    }
-                }
+                var (removedCount, linkChanged) = ReconcileOwnedTagsAndLinks(
+                    game,
+                    hasOtherAccepted ? otherTagIds : null,
+                    hasOtherAccepted ? xTagIds : null);
 
-                // A disabled source contributes no links — remove this source's links too.
-                var linksChanged = ReconcileSourceLinksCore(game);
-
-                if (removedCount > 0 || linksChanged)
+                if (removedCount > 0 || linkChanged)
                 {
                     _logger.Info($"VRMod Tag Service: Removed {removedCount} VRMod tag(s) and stale source link(s) from '{SafeLogText(game.Name)}' (source '{source.DisplayName}' disabled).");
                     gamesToUpdate.Add(game);
@@ -3495,17 +3598,6 @@ namespace Playnite.VRMods
         /// <returns>The number of games changed.</returns>
         public int RemoveAllVrModTags(System.Collections.Generic.IEnumerable<Game>? games, System.Action<int, int, string>? onProgress = null, System.Threading.CancellationToken cancellationToken = default)
         {
-            // Precompute the VR tag id set (tags whose name starts with the umbrella prefix) so
-            // per-game removal needs no per-tag DB lookups.
-            var vrTagIds = new HashSet<Guid>();
-            foreach (var t in _api.Database.Tags)
-            {
-                if (string.IsNullOrEmpty(t.Name))
-                    continue;
-                if (VrModCategories.IsPluginTagName(t.Name))
-                    vrTagIds.Add(t.Id);
-            }
-
             // Scope the loop: the supplied games (the review dialog's matches) or the whole library.
             // De-duplicated (by reference) so a game matched by several sources is touched once.
             var scope = games == null
@@ -3513,6 +3605,7 @@ namespace Playnite.VRMods
                 : games.Where(g => g != null).Distinct().ToList();
             var total = scope.Count;
             var gamesToUpdate = new List<Game>();
+            var ownedTagIds = PluginTagIds();
             var current = 0;
             foreach (var game in scope)
             {
@@ -3521,23 +3614,7 @@ namespace Playnite.VRMods
                 if (cancellationToken.IsCancellationRequested)
                     break;
 
-                var removedCount = 0;
-                var tagIds = game.TagIds;
-                if (tagIds != null)
-                {
-                    foreach (var tagId in tagIds.ToList())
-                    {
-                        if (vrTagIds.Contains(tagId))
-                        {
-                            tagIds.Remove(tagId);
-                            removedCount++;
-                        }
-                    }
-                }
-
-                // Decisions were cleared before this call, so no source link is desired anymore —
-                // reconcile (removes every plugin-owned link) in the same pass as the tag removal.
-                var linkChanged = ReconcileSourceLinksCore(game);
+                var (removedCount, linkChanged) = ReconcileOwnedTagsAndLinks(game, keepTagIds: null, ownedTagIds);
 
                 if (removedCount > 0)
                     _logger.Info($"VRMod Tag Service: Removed {removedCount} VRMod tag(s) from '{SafeLogText(game.Name)}' (all decisions reset).");
@@ -3554,6 +3631,215 @@ namespace Playnite.VRMods
             }
 
             return gamesToUpdate.Count;
+        }
+
+        /// <summary>
+        /// The game context menu's "Reject all assigned VR mods on this game...": marks the source
+        /// listings assigned to these games as <see cref="MatchDecision.Rejected"/>, and removes what
+        /// those assignments left behind - the games' VRMod tags and their source links - now, instead of
+        /// leaving it to a later scan's stale-tag pass, which any failed source skips and which would
+        /// offer the mods again.
+        /// </summary>
+        /// <remarks>
+        /// What gets vetoed is what the record can name: this game's accepted decisions. Every other
+        /// listing that merely fits the game is a suggestion the user has not answered, and "this mod is
+        /// wrong" is not "no mod could ever be right" - so a suggestion stays a suggestion, and the
+        /// label's promise that other mods keep being offered is true.
+        ///
+        /// One state needs the catalog instead of the record: a game that wears our tags while no decision
+        /// names any pairing for it. That is what an older build left behind, back when a scan could apply
+        /// a Pending match without asking; a scan cannot do that any more, so the state is legacy and the
+        /// record is blind to it. For those games alone the cached listings are matched against the game
+        /// and the matches are vetoed as the best available reading of what put the tags there. With no
+        /// cached listings the tags and links still come off, but such a pairing is not vetoed and the
+        /// next scan offers it again - logged as a Warn, because the user asked for the opposite.
+        ///
+        /// A vetoed pairing keeps showing up in the review list as Rejected, which is what makes "Reset
+        /// my decisions..." able to undo this.
+        ///
+        /// Runs without the single-scan gate, like <see cref="RemoveAllVrModTags"/> and
+        /// <see cref="RemoveTagsForSource"/>: this neither fetches nor scans, and queueing behind a running
+        /// scan would hang the menu action behind it.
+        /// </remarks>
+        /// <param name="games">The selected games. Games outside this set are not touched.</param>
+        /// <param name="onProgress">Optional <c>(current, total, gameName)</c> called once per game, before its work.</param>
+        /// <param name="cancellationToken">Checked once per game.</param>
+        /// <returns>The number of pairings marked rejected, and the number of games whose tags or links changed.</returns>
+        public (int Rejected, int GamesChanged) RejectAssignedVrMods(IReadOnlyList<Game>? games, System.Action<int, int, string>? onProgress = null, System.Threading.CancellationToken cancellationToken = default)
+        {
+            var gameList = (games ?? new List<Game>()).Where(g => g != null).ToList();
+            if (gameList.Count == 0)
+                return (0, 0);
+
+            if (_sourceCache.IsEmpty)
+                _logger.Warn("VRMod Tag Service: Reject: no cached source listings, so a tag an older build left with no decision behind it cannot be traced to a listing. Its tags and links come off, but the pairing is not vetoed and a later scan will offer it again.");
+
+            // Decisions first, tags and links second: the link reconciliation below reads the decisions to
+            // work out which links are still wanted, so a veto written after it would leave the link behind.
+            // "Ours" is decided by the tag name, as everywhere else (see ReconcileOwnedTagsAndLinks);
+            // collected once here because this loop runs over the whole selection and the answer is the
+            // same for every game.
+            var ownedTagIds = PluginTagIds();
+            var writes = new List<(string Key, MatchDecision Decision, string? SourceTags)>();
+            foreach (var game in gameList)
+            {
+                // The pairings to veto: this game's Accepted decisions, straight out of the per-game
+                // index (only an Accepted key names an assignment - a Rejected one already says no).
+                var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var key in _settings.GetAcceptedDecisionKeysForGame(game.Id))
+                    keys.Add(key);
+
+                // The catalog is consulted only where the record names nothing and the game still wears
+                // our tags: the legacy state of a tag no decision was ever written for. Where the record
+                // does speak it is the whole answer, and the other listings that fit this game are
+                // left as the suggestions they are.
+                if (keys.Count == 0 && CarriesOwnedTags(game, ownedTagIds))
+                {
+                    foreach (var pair in CachedEntriesMatching(game))
+                        keys.Add(pair.Entry.MakeDecisionKey(pair.SourceId, game.Id));
+                }
+
+                foreach (var key in keys)
+                {
+                    if (_settings.GetDecisionByKey(key) != MatchDecision.Rejected)
+                        writes.Add((key, MatchDecision.Rejected, null));
+                }
+            }
+
+            if (writes.Count > 0)
+                _settings.SetDecisionsByKey(writes);
+
+            var gamesChanged = 0;
+            var current = 0;
+            using (_api.Database.BufferedUpdate())
+            {
+                foreach (var game in gameList)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    onProgress?.Invoke(++current, gameList.Count, SafeLogText(game.Name));
+
+                    // Every assignment to this game was vetoed above, so nothing backs a tag we own on it.
+                    var (removedCount, linkChanged) = ReconcileOwnedTagsAndLinks(game, keepTagIds: null, ownedTagIds);
+                    if (removedCount > 0)
+                        _logger.Info($"VRMod Tag Service: Rejected the assigned VR mods of '{SafeLogText(game.Name)}' and removed {removedCount} tag(s){(linkChanged ? " and stale source link(s)" : string.Empty)}.");
+
+                    if (removedCount > 0 || linkChanged)
+                    {
+                        _api.Database.Games.Update(game);
+                        gamesChanged++;
+                    }
+                }
+            }
+
+            _logger.Info($"VRMod Tag Service: Reject: vetoed {writes.Count} listing(s) over {gameList.Count} game(s); {gamesChanged} game(s) changed.");
+            return (writes.Count, gamesChanged);
+        }
+
+        /// <summary>
+        /// What the game context menu asks before offering its two decision items: does any of these
+        /// games have a mod assigned to it by the plugin, and does any of them hold a decision at all.
+        /// Both answers come from the plugin's own saved decisions and nothing else - they are the
+        /// plugin's record of what it did, while the tags on a game are a library field anyone can
+        /// change, and reading them back was a second, weaker answer to the same question.
+        ///
+        /// "Assigned" means an Accepted pairing ("Reject my VR mods" has something to undo); "a decision
+        /// at all" means Accepted, Rejected or Pending ("Reset my decisions" must be offered where every
+        /// mod was voted down and nothing was assigned, which is exactly the state only Reset can undo).
+        /// </summary>
+        /// <remarks>
+        /// Runs on every right-click, so it asks the per-game index over the decisions (see
+        /// <see cref="VrModTagSettings.GetDecisionStateForGame"/>) instead of walking the stored keys,
+        /// and stops at the first accepted pairing, which answers both questions at once.
+        ///
+        /// One case the saved decisions cannot see, and now say so: a match an unattended scan applied
+        /// records nothing (<see cref="ScanGameCore"/>), so such a game carries the plugin's tags with no
+        /// pairing behind them and neither menu item appears for it. "Check this game for VR mods..."
+        /// still surfaces it, and its row in the review dialog is where the pairing gets a decision. The
+        /// honest fix is upstream: stop applying anything the user has not saved.
+        /// </remarks>
+        /// <param name="games">The selected games.</param>
+        /// <returns>Whether any of them has an assignment, and whether any of them holds a decision.</returns>
+        public (bool AnyAssigned, bool AnyStoredDecision) GetDecisionStateForGames(IReadOnlyList<Game>? games)
+        {
+            var gameList = (games ?? new List<Game>()).Where(g => g != null).ToList();
+
+            var anyAssigned = false;
+            var anyDecision = false;
+            foreach (var game in gameList)
+            {
+                var state = _settings.GetDecisionStateForGame(game.Id);
+                if (state == GameDecisionState.None)
+                    continue;
+
+                anyDecision = true;
+                if ((state & GameDecisionState.HasAccepted) != 0)
+                {
+                    anyAssigned = true;
+                    break; // One accepted pairing answers both questions; no later game can change them.
+                }
+            }
+
+            return (anyAssigned, anyDecision);
+        }
+
+        /// <summary>
+        /// The cached source listings that match one game, each with the source that published it - the
+        /// per-game catalog walk of <see cref="GetVrModEntriesForGame"/> keeping the source ids it throws
+        /// away, because a decision key needs one.
+        /// </summary>
+        /// <summary>
+        /// Whether the game carries any tag this plugin owns - the mark that something this plugin wrote is
+        /// on it, which is what makes a decision-less game worth reading through the catalog (see
+        /// <see cref="RejectAssignedVrMods"/>). A game with none of our tags was never tagged by us, so no
+        /// assignment of ours is hiding in the listings that happen to fit it.
+        /// </summary>
+        private static bool CarriesOwnedTags(Game game, HashSet<Guid> ownedTagIds)
+        {
+            var tagIds = game.TagIds;
+            if (tagIds == null)
+                return false;
+
+            foreach (var tagId in tagIds)
+            {
+                if (ownedTagIds.Contains(tagId))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private List<(string SourceId, VrModEntry Entry)> CachedEntriesMatching(Game game)
+        {
+            var normalizedGame = GetNormalizedGameName(game);
+            var normalizedGameTail = EditionTailVariant(normalizedGame);
+            var threshold = _settings.FuzzyMatchThreshold;
+            var gameAppIds = GetGameSteamAppIds(game);
+
+            var hits = new List<(string SourceId, VrModEntry Entry)>();
+            foreach (var kvp in _sourceCache)
+            {
+                foreach (var entry in kvp.Value.Entries)
+                {
+                    if (EntryMatchesGame(entry, normalizedGame, normalizedGameTail, gameAppIds, threshold))
+                        hits.Add((kvp.Key, entry));
+                }
+            }
+            return hits;
+        }
+
+        /// <summary>
+        /// The ids of every tag this plugin owns (<see cref="VrModCategories.IsPluginTagName"/>), collected
+        /// once per call so the per-game checks below need no tag lookups.
+        /// </summary>
+        private HashSet<Guid> PluginTagIds()
+        {
+            var ids = new HashSet<Guid>();
+            foreach (var tag in _api.Database.Tags)
+            {
+                if (!string.IsNullOrEmpty(tag.Name) && VrModCategories.IsPluginTagName(tag.Name))
+                    ids.Add(tag.Id);
+            }
+            return ids;
         }
 
         /// <summary>

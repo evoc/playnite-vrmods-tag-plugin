@@ -261,10 +261,17 @@ namespace PlayniteVRMods.Tests.Unit
 
         private void Scan(params VrModEntry[] entries)
         {
-            _games.Items.Add(new Game("Skyrim") { TagIds = new List<Guid>() });
-            var service = new VrModTagService(_api, new VrModTagSettings(), _logger, _registry);
+            var game = new Game("Skyrim") { TagIds = new List<Guid>() };
+            _games.Items.Add(game);
+            var settings = new VrModTagSettings();
+            var parser = new VocabularyTestParser(entries);
+            var service = new VrModTagService(_api, settings, _logger, _registry);
             service.Settings.FuzzyMatchThreshold = 0.9f;
-            _registry.Register(new VocabularyTestParser(entries));
+            _registry.Register(parser);
+            // What is under test here is which tag NAMES one pairing produces, not whether the pairing
+            // was ever agreed to. The agreement is the precondition a scan needs in order to write any
+            // tag at all, so it is arranged here rather than asserted by these tests.
+            settings.AcceptListingsFrom(parser, game.Id);
             service.RunFullScanAsync().GetAwaiter().GetResult();
         }
 

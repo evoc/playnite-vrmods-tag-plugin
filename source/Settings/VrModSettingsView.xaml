@@ -142,7 +142,15 @@
                                Margin="6,0,0,0" VerticalAlignment="Center" />
                 </StackPanel>
             </DockPanel>
-            <TextBlock Text="Full Scan checks every enabled source and applies the matches, without a dialog. Review VR Mods opens the review dialog for every matched game from the data of your last scan — without rescanning — so you can review or change your decisions (it runs a scan first only when no scan data is available yet, e.g. right after Playnite started)."
+            <!--
+                Two sentences, one per button, and the split is deliberate: one run-on paragraph used to
+                claim Review VR Mods "runs a scan first" (true only when no scan data exists yet) and that
+                Full Scan "applies the matches" (it writes the stored decisions, not the matches a scan
+                just found). Each button now gets its own line, and neither promises what the other does.
+            -->
+            <TextBlock Text="Full Scan checks every enabled source again, then writes the pairings you have accepted and takes back the ones you rejected — it opens no dialog. A pairing you have never decided is kept for the review dialog, not written."
+                       Style="{StaticResource VrTextMuted}" TextWrapping="Wrap" Margin="0,0,0,4" />
+            <TextBlock Text="Review VR Mods opens the review dialog with every match the last scan found, sorted by score. It does not rescan first, so a pairing added since your last scan waits until the next one."
                        Style="{StaticResource VrTextMuted}" TextWrapping="Wrap" Margin="0,0,0,14" />
 
             <!--
@@ -284,7 +292,7 @@
                             </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
-                    <TextBlock Text="Sources enabled for matching. Click a source name to open its website; hover any value to see what it means. 'Matched' counts only accepted matches — pending and rejected don't count."
+                    <TextBlock Text="Sources enabled for matching. Click a source name to open its website; hover any value to see what it means. The Matched column counts the pairings you have accepted only."
                                Style="{StaticResource VrTextMuted}" TextWrapping="Wrap" />
                 </StackPanel>
             </GroupBox>

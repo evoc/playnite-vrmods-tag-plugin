@@ -21,6 +21,7 @@ namespace PlayniteVRMods.Tests.Unit
         private VrModTagService _service = null!;
         private VrModSourceRegistry _registry = null!;
         private IPlayniteAPI _mockApi = null!;
+        private VrModTagSettings _settings = null!;
 
         [OneTimeSetUp]
         public void OneTimeSetUp()
@@ -48,7 +49,8 @@ namespace PlayniteVRMods.Tests.Unit
             _mockApi.Database.BufferedUpdate().Returns(new FakeBufferedUpdate());
 
             _registry = new VrModSourceRegistry();
-            _service = new VrModTagService(_mockApi, new VrModTagSettings(), new NullLogger(), _registry);
+            _settings = new VrModTagSettings();
+            _service = new VrModTagService(_mockApi, _settings, new NullLogger(), _registry);
         }
 
         [Test]
@@ -71,6 +73,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var taggedGame = _games.Items[0];
@@ -91,6 +94,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var taggedGame = _games.Items[0];
@@ -177,6 +181,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             // The run's debug log lands on the source's SourceStatus (the settings
@@ -185,7 +190,9 @@ namespace PlayniteVRMods.Tests.Unit
             Assert.That(status.LastRunLog, Is.Not.Empty);
             Assert.That(status.LastRunLog[0], Does.StartWith("Run started"));
             Assert.That(status.LastRunLog, Does.Contain("Fetched 1 entries"));
-            Assert.That(status.LastRunLog, Does.Contain("Apply: 1 tag(s) applied, 0 source link(s) ensured"));
+            // A listing without a URL of its own links the game to the source's website, so the accepted
+            // pairing leaves one source link behind.
+            Assert.That(status.LastRunLog, Does.Contain("Apply: 1 tag(s) applied, 1 source link(s) ensured"));
         }
 
         [Test]
@@ -215,6 +222,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, re2.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var taggedGame = _games.Items[0];
@@ -235,6 +243,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var taggedGame = _games.Items[0];
@@ -255,6 +264,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var taggedGame = _games.Items[0];
@@ -275,6 +285,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var taggedGame = _games.Items[0];
@@ -294,6 +305,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, re2.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var taggedGame = _games.Items[0];
@@ -315,6 +327,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, hl2.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(_games.Items[0].TagIds, Is.Not.Null);
@@ -352,12 +365,18 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
-            // Control: the default threshold (0.8) does not match this pair.
+            // Control: at the default threshold (0.8) this pair is never offered, so there is nothing for
+            // a user to agree to and the game stays untouched.
             _service.RunFullScanAsync().GetAwaiter().GetResult();
             Assert.That(game.TagIds, Is.Empty);
 
-            // Below the old default: the same pair matches and the category tag applies.
+            // Below the old default the pair is offered - and a suggestion is not an answer, so it still
+            // tags nothing until the user agrees to it.
             _service.Settings.FuzzyMatchThreshold = 0.5f;
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+            Assert.That(game.TagIds, Is.Empty, "a pairing nobody agreed to tags nothing");
+
+            _settings.AcceptListing(parser, "aaaaaaaa bbbbbbbb", game.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var tag = _tags.Items.FirstOrDefault(t => t.Name == "VRMod UEVR");
@@ -421,6 +440,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
             _service.Settings.SetDecision(parser.SourceId, "Skyrim", skyrim.Id, MatchDecision.Accepted);
             _service.ReconcileSourceLinks(skyrim);
@@ -809,6 +829,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(okParser);
 
+            _settings.AcceptListingsFrom(okParser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             // The healthy source still matches and applies (exact match auto-applies).
@@ -994,6 +1015,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.ScanGameAsync(skyrim).GetAwaiter().GetResult();
 
             Assert.That(skyrim.TagIds, Is.Not.Null);
@@ -1051,6 +1073,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.ScanGameAsync(skyrim).GetAwaiter().GetResult();
             _service.Settings.SetDecision(parser.SourceId, "Skyrim", skyrim.Id, MatchDecision.Accepted);
             _service.ReconcileSourceLinks(skyrim);
@@ -1104,6 +1127,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.ScanGameAsync(skyrim).GetAwaiter().GetResult();
 
             Assert.That(skyrim.TagIds, Contains.Item(vrTag.Id));
@@ -1175,6 +1199,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, doom3.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(_games.Items[0].TagIds, Is.Not.Null);
@@ -1193,6 +1218,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, game.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(_games.Items[0].TagIds, Is.Not.Null);
@@ -1216,6 +1242,8 @@ namespace PlayniteVRMods.Tests.Unit
             _registry.Register(parser1);
             _registry.Register(parser2);
 
+            _settings.AcceptListingsFrom(parser1, skyrim.Id);
+            _settings.AcceptListingsFrom(parser2, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(_games.Items[0].TagIds, Has.Count.EqualTo(3));
@@ -1252,6 +1280,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var game = _games.Items[0];
@@ -1398,6 +1427,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, game.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(game.TagIds, Is.Not.Null);
@@ -1428,6 +1458,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, game.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var tagNames = _tags.Items.Select(t => t.Name).ToList();
@@ -1453,6 +1484,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, game.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var vrModTag = _tags.Items.FirstOrDefault(t => t.Name == "VRMod");
@@ -1473,6 +1505,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, game.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             var fmcTag = _tags.Items.FirstOrDefault(t => t.Name == "VRMod Full Motion");
@@ -1569,6 +1602,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(skyrim.TagIds, Has.Count.EqualTo(6));
@@ -1751,6 +1785,9 @@ namespace PlayniteVRMods.Tests.Unit
             }, "fuzzy-best");
             _registry.Register(parser);
 
+            // The loser gets no decision: this test asks which of two games the rules pick, and accepting
+            // the listing for both would answer it before the scan runs - and tag the game it asserts empty.
+            _settings.AcceptListing(parser, "Resident Evil 7 Biohazard", higher.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(higher.TagIds, Has.Count.EqualTo(2),
@@ -1788,6 +1825,8 @@ namespace PlayniteVRMods.Tests.Unit
             }, "fuzzy-tie");
             _registry.Register(parser);
 
+            // Only the expected winner is agreed to; see the higher-scoring test above.
+            _settings.AcceptListing(parser, "Dead Space Remake", first.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             Assert.That(first.TagIds, Has.Count.EqualTo(2),
@@ -1815,6 +1854,7 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListingsFrom(parser, skyrim.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             // The merged entry keeps BOTH distinct deep links (first-seen order) — each
@@ -2025,6 +2065,8 @@ namespace PlayniteVRMods.Tests.Unit
             });
             _registry.Register(parser);
 
+            _settings.AcceptListing(parser, "Skyrim", skyrim.Id);
+            _settings.AcceptListing(parser, "DOOM", doom.Id);
             _service.ScanGamesAsync(new[] { skyrim, doom }).GetAwaiter().GetResult();
 
             Assert.That(skyrim.TagIds, Is.Not.Null.And.Not.Empty);
@@ -2075,6 +2117,7 @@ namespace PlayniteVRMods.Tests.Unit
             _service.SeedKnownGames();
 
             var newGame = new Game("DOOM") { TagIds = new List<System.Guid>() };
+            _settings.AcceptListing(parser, "DOOM", newGame.Id);
             _games.Items.Add(newGame);
             _service.NotifyLibraryUpdated();
             WaitUntil(() => newGame.TagIds != null && newGame.TagIds.Count > 0, 10000);
@@ -2135,6 +2178,10 @@ namespace PlayniteVRMods.Tests.Unit
 
             // A library update adds a NEW game while the scan holds the gate.
             var newGame = new Game("DOOM") { TagIds = new List<System.Guid>() };
+            // The user's yes for the new game, written by key. The AcceptListing helper is unusable on this
+            // parser: it asks the source for its listings to build the key, and this parser withholds an
+            // answer until the test releases it below.
+            _settings.SetDecision(parser.SourceId, "DOOM", newGame.Id, MatchDecision.Accepted);
             _games.Items.Add(newGame);
             _service.NotifyLibraryUpdated();
 
@@ -2192,12 +2239,15 @@ namespace PlayniteVRMods.Tests.Unit
 
             var logger = new LevelRecorderLogger();
             _service = new VrModTagService(_mockApi, new VrModTagSettings(), logger, _registry);
+            // The service under test reads the settings it was constructed with, so the user's yes goes
+            // there - not on the fixture's settings.
+            _service.Settings.AcceptListingsFrom(parser, game.Id);
             _service.RunFullScanAsync().GetAwaiter().GetResult();
 
             // Per-match detail goes to Debug...
-            Assert.That(logger.DebugMessages.Any(d => d.Contains("Auto-applied (pending, no review)")), Is.True);
+            Assert.That(logger.DebugMessages.Any(d => d.Contains("Auto-applied (accepted)")), Is.True);
             // ...and is NOT repeated at Info...
-            Assert.That(logger.InfoMessages.Any(d => d.Contains("Auto-applied (pending, no review)")), Is.False);
+            Assert.That(logger.InfoMessages.Any(d => d.Contains("Auto-applied (accepted)")), Is.False);
             // ...while the scan summary stays at Info.
             Assert.That(logger.InfoMessages.Any(d => d.Contains("Full scan complete")), Is.True);
         }

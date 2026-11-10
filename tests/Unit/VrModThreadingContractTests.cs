@@ -110,6 +110,9 @@ namespace PlayniteVRMods.Tests.Unit
                 "the library walk finished before the test could act inside it - raise the row count or the per-row delay, otherwise this test proves nothing.");
 
             var game = new Game("Vampyr") { TagIds = new List<Guid>() };
+            // What a scan does with a new game is decided by the user's answer, not by the game's arrival:
+            // this test is about the new game not getting lost, so its yes is arranged up front.
+            service.Settings.SetDecision("src-threading", "Vampyr", game.Id, MatchDecision.Accepted);
             _games.Items.Add(game);
 
             var sw = Stopwatch.StartNew();
@@ -145,8 +148,9 @@ namespace PlayniteVRMods.Tests.Unit
             service.SeedKnownGames();
 
             var game = new Game("Vampyr") { TagIds = new List<Guid>() };
+            // See the slow-walk test: the pairing has to be one the user agreed to before anything tags it.
+            service.Settings.SetDecision("src-threading", "Vampyr", game.Id, MatchDecision.Accepted);
             _games.Items.Add(game);
-
             service.NotifyLibraryUpdated();
 
             var tagged = SpinWait.SpinUntil(() => game.TagIds.Count > 0, TimeSpan.FromSeconds(25));
