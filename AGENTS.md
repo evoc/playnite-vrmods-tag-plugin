@@ -657,6 +657,36 @@ because it pushes the version tag it creates:
   asserts the version that actually landed, because a tool install is outside
   the project graph and the vulnerable-package audit never sees it.
 
+**Before opening a PR.** Every command below reproduces one `review-gates` step; run
+them from the repository root in this order and each must come back clean.
+
+```text
+dotnet restore Playnite.VRMods.sln --locked-mode
+dotnet format whitespace --verify-no-changes --no-restore
+dotnet format style --verify-no-changes --no-restore
+dotnet build source/Playnite.VRMods.csproj -c Release -v n
+dotnet test tests/Playnite.VRMods.Tests.csproj -c Release --no-restore
+```
+
+The locked restore is the one people skip: a package reference the lock file does
+not name fails the gate with NU1004, and the fix is to run a plain `dotnet restore`,
+then commit the regenerated `source/packages.lock.json` and `tests/packages.lock.json`
+onto the PR branch. NU1403 (a package no longer matching its recorded hash) is not
+fixable that way - it is the supply-chain signal, and a human has to read the package
+first.
+
+The test gate adds `-p:DisableGitVersionTask=true` because the PR merge ref is shallow,
+tagless and named `pull/N/merge`, where GitVersion calls the branch orphaned; locally
+your clone has tags and needs no such flag.
+
+Two gates have no local command. The vulnerable-package audit runs, per project,
+`dotnet list <project> package --vulnerable --include-transitive --format json` and
+fails closed when an audit names no project - an unaudited graph is not a pass. The
+Conventional-Commits gate is inline pwsh in `ci.yml`: header shape
+`<type>(scope)!: message`, the type list printed by the step on failure. Nothing here
+checks your commit messages before you push, and a wrong type is not a style slip - the
+type decides the released version.
+
 Neither workflow uses `fetch-depth: 0` (checkout documents that as all
 history for all branches and tags, and on a `pull_request` event the
 repository also carries `refs/pull/<n>/head`, a ref whose commits come from
