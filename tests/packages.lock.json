@@ -72,8 +72,8 @@
       },
       "PlayniteSDK": {
         "type": "Transitive",
-        "resolved": "6.15.0",
-        "contentHash": "WzgyHIi0c1ViCBREdM68puiCbP0mY/VqDDUyYHY1rMmviO+ufaIpw+OjmSUSnujh/p9acaooPhk2QiKLGT/9IA=="
+        "resolved": "6.18.0",
+        "contentHash": "f/5yUuJmbplExCSUymqvfz2lCishp/Dez9p+YDc5V6yUMOSYvX82PKWwgQI6+GYEN60f3MAuM/WK50KJNVgX1g=="
       },
       "System.Buffers": {
         "type": "Transitive",
@@ -140,7 +140,7 @@
       "playnite.vrmods": {
         "type": "Project",
         "dependencies": {
-          "PlayniteSDK": "[6.15.0, )",
+          "PlayniteSDK": "[6.18.0, )",
           "System.Text.Json": "[8.0.5, )",
           "System.ValueTuple": "[4.5.0, )"
         }

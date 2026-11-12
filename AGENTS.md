@@ -75,7 +75,7 @@ is one file, instantiated twice — once per Steam curator): `PcvrCentralParser`
 
 - **.NET Framework 4.6.2 + WPF → Windows-only.** .NET SDK 8 (`global.json`
   pins `8.0.421`; any 8.0.4xx with xx ≥ 421 works). Internet
-  access to nuget.org for restore (PlayniteSDK 6.15.0, NUnit,
+  access to nuget.org for restore (PlayniteSDK 6.18.0, NUnit,
   NSubstitute, …). No Playnite install is needed to build or test.
 
 ```text
