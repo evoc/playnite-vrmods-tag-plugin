@@ -173,9 +173,14 @@ on, and the warning gates below are run against it).
   that way first. `fail_on_unmatched_files: true` is set because the
   action's default is to publish anyway when the `files:` glob matches
   nothing. **Every push to main is a release** — no prereleases; feature
-  branches are built locally, never released. Procedure: merge to main
-  with Conventional Commit messages - that's the whole procedure; the
-  prefix decides whether the release escalates (a `feat:` mislabeled as
+  branches are built locally, never released. **`main` is not pushable.** Any client,
+  any account: `! [remote rejected] main -> main (push declined due to repository rule
+  violations)`, "Changes must be made through a pull request". So the procedure is:
+  branch as `type/kebab-description`, open a PR, let the gates run, merge. The gate
+  offers **squash or rebase only** - no merge commit - and a rebase rewrites the SHAs
+  that landed, so keep the branch you merged until your local `main` is re-synced onto
+  the remote one. The prefix of each commit subject still decides whether the release
+  escalates (a `feat:` mislabeled as
   `fix:`/`chore:` ships a feature inside a patch release; the
   Conventional-Commits gate in the `review-gates` job of
   `.github/workflows/ci.yml` catches non-conventional
