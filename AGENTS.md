@@ -745,8 +745,10 @@ Branch protection has to name the checks for any of this to block a merge, and
 the name must match what the job reports: a required check for a name that no
 job ever posts (the renamed `commitlint` job, or the release job while it was
 called `build`) blocks nothing, because a required check can only be required
-once it has reported on a commit at least once. Required: `review-gates` on
-pull requests, `release` on push to main.
+once it has reported on a commit at least once. A merge to `main` waits for every
+required check, whatever produces it: some are configured outside `.github/workflows`.
+A required check that never reports blocks every PR, so a silent one is treated as a
+broken gate and repaired at once.
 
 Analyzers: `source/Playnite.VRMods.csproj` sets `EnableNETAnalyzers`
 with `AnalysisLevel=latest` + `AnalysisMode=All`. On `net462` the SDK
