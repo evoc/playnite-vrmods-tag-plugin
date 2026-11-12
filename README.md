@@ -88,7 +88,7 @@ Windows only: the plugin targets `net462`
 and WPF (Playnite's own extension target).
 
 - .NET SDK 8, pinned by [`global.json`](global.json).
-- `PlayniteSDK` 6.15.0 and `GitVersion.MsBuild` 6.8.2 from NuGet.
+- `PlayniteSDK` 6.18.0 and `GitVersion.MsBuild` 6.8.2 from NuGet.
 - Version comes from git through GitVersion: the nearest tag plus the
   commits since it. GitVersion applies one increment per release, with
   patch as the floor, and the Conventional-Commit messages decide whether

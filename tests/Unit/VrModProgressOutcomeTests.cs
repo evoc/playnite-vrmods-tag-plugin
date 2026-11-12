@@ -91,7 +91,7 @@ namespace PlayniteVRMods.Tests.Unit
                 "and the review dialog closes on it, as it did before this round");
 
             Assert.That(encodedAsAValue.Result, Is.Not.False,
-                "the SDK assembly this build uses (PlayniteSDK 6.15.0) keeps the argument it is given; " +
+                "the SDK assembly this build uses (PlayniteSDK 6.18.0) keeps the argument it is given; " +
                 "Playnite's own wrappers do not always. The dialog accepts either.");
             Assert.That(VrModReviewDialog.ProgressFailureText("Scan All Games", encodedAsAValue), Is.Null);
             Assert.That(VrModReviewDialog.ReviewDialogMayClose(encodedAsAValue), Is.True);

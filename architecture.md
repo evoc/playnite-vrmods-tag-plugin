@@ -1631,7 +1631,7 @@ Icon: icon.png
     <!-- Version comes from the git tag (see GitVersion.yml); the release workflow creates the tag
          on every push to main. -->
     <PackageReference Include="GitVersion.MsBuild" Version="6.8.2" PrivateAssets="all" />
-    <PackageReference Include="PlayniteSDK" Version="6.15.0" />
+    <PackageReference Include="PlayniteSDK" Version="6.18.0" />
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
     <PackageReference Include="System.ValueTuple" Version="4.5.0" />
   </ItemGroup>

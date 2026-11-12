@@ -62,7 +62,7 @@
          only, nothing of it ends up in the shipped .pext. -->
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies"
                       Version="1.0.3" PrivateAssets="all" />
-<PackageReference Include="PlayniteSDK" Version="6.15.0" />
+     <PackageReference Include="PlayniteSDK" Version="6.18.0" />
      <PackageReference Include="System.Text.Json" Version="8.0.5" />
      <PackageReference Include="System.ValueTuple" Version="4.5.0" />
    </ItemGroup>

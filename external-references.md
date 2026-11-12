@@ -401,7 +401,7 @@ that mod now yields both `Full Motion Controls` **and** `UEVR`. See
 
 | Package | Version | Purpose |
 | --- | --- | --- |
-| Playnite.SDK | 6.15.0 | Plugin SDK |
+| Playnite.SDK | 6.18.0 | Plugin SDK |
 | System.ValueTuple | 4.5.0 | Tuple support for .NET Framework 4.6.2 |
 | NUnit | 4.2.2 | Unit testing (test project) |
 | NUnit3TestAdapter | 4.6.0 | Test adapter (test project) |
