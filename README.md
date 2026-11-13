@@ -80,7 +80,8 @@ changes it makes are part of your Playnite library, not a private store.
 - [external-references.md](external-references.md) —
   Source URLs, Playnite SDK pointers, NuGet versions.
 - [AGENTS.md](AGENTS.md) — Contributor/agent guide:
-  build commands, gates, conventions, where to start.
+  the first commands, the hard rules, and the index to
+  `agents/`, where each topic's detail lives.
 
 ## Build
 

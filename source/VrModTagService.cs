@@ -2516,7 +2516,8 @@ namespace Playnite.VRMods
                 return;
             var message = "VRMod Tag Service: refused to wait on Playnite's UI thread while holding "
                 + "the new-game lock (lock-order inversion: the UI thread pumps library-change "
-                + "handlers that take that lock). See the Threading contract in AGENTS.md.";
+                + "handlers that take that lock). See the Threading contract in "
+                + "agents/threading.md.";
             _logger.Error(message);
             throw new InvalidOperationException(message);
         }

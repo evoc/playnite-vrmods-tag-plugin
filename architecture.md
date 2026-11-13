@@ -25,7 +25,8 @@ built on top of the Playnite SDK (no Playnite core is modified).
 
 The README (repo root) is user-facing; `database.md` documents the
 Playnite DB layout in full; `external-references.md` is the source-research
-trail. `AGENTS.md` (project root, repo) covers build/agent conventions.
+trail. `AGENTS.md` (project root, repo) is the agent guide's index;
+its detail lives in `agents/`.
 
 **Where the tests live.** `tests/Unit/` (58 files) is everything that
 runs without Playnite's PMW wrapper plus the parser plumbing tests

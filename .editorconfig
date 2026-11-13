@@ -19,9 +19,9 @@ indent_size = 4
 
 # Analyzer exclusions. The project sets <AnalysisMode>All</AnalysisMode> (the
 # SDK leaves analyzers off on net462 otherwise), so every CA family runs and a
-# family is silenced only by an entry here - each with its reason, as AGENTS.md
-# requires. A severity line without a reason is a suppressed warning, not an
-# exclusion.
+# family is silenced only by an entry here - each with its reason, as
+# agents/analyzers.md requires. A severity line without a reason is a
+# suppressed warning, not an exclusion.
 #
 # These severities win over the command line: -p:AnalysisLevel=latest-All does
 # NOT re-enable a family listed here. To see the whole backlog - every family,
