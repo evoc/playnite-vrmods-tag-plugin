@@ -48,8 +48,9 @@ because it pushes the version tag it creates:
   asserts the version that actually landed, because a tool install is outside
   the project graph and the vulnerable-package audit never sees it.
 
-**Before opening a PR.** Every command below reproduces one `review-gates` step; run
-them from the repository root in this order and each must come back clean.
+**Before opening a PR.** Every command below reproduces one `review-gates`
+step; run them from the repository root in this order and each must come back
+clean.
 
 ```text
 dotnet restore Playnite.VRMods.sln --locked-mode
@@ -70,13 +71,13 @@ The test gate adds `-p:DisableGitVersionTask=true` because the PR merge ref is s
 tagless and named `pull/N/merge`, where GitVersion calls the branch orphaned; locally
 your clone has tags and needs no such flag.
 
-Two gates have no local command. The vulnerable-package audit runs, per project,
-`dotnet list <project> package --vulnerable --include-transitive --format json` and
-fails closed when an audit names no project - an unaudited graph is not a pass. The
-Conventional-Commits gate is inline pwsh in `ci.yml`: header shape
-`<type>(scope)!: message`, the type list printed by the step on failure. Nothing here
-checks your commit messages before you push, and a wrong type is not a style slip - the
-type decides the released version.
+Two gates have no local command. The vulnerable-package audit runs, per
+project, `dotnet list <project> package --vulnerable --include-transitive
+--format json` and fails closed when an audit names no project - an unaudited
+graph is not a pass. The Conventional-Commits gate is inline pwsh in `ci.yml`:
+header shape `<type>(scope)!: message`, the type list printed by the step on
+failure. Nothing here checks your commit messages before you push, and a wrong
+type is not a style slip - the type decides the released version.
 
 Neither workflow uses `fetch-depth: 0` (checkout documents that as all
 history for all branches and tags, and on a `pull_request` event the
@@ -133,7 +134,7 @@ job ever posts (the renamed `commitlint` job, or the release job while it was
 called `build`) blocks nothing, because a required check can only be required
 once it has reported on a commit at least once. A merge to `main` waits for every
 required check, whatever produces it: some are configured outside `.github/workflows`.
-A required check that never reports blocks every PR, so a silent one is treated as a
-broken gate and repaired at once.
+A required check that never reports blocks every PR, so a silent one is treated
+as a broken gate and repaired at once.
 
 - Analyzers: the posture and the policy are in [analyzers.md](analyzers.md).

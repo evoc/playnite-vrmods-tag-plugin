@@ -1,4 +1,13 @@
-// markdownlint-cli2: stock rules, no rule overrides.
+// markdownlint-cli2: stock rules, with one override, documented below.
+//
+// config - MD013 (line length, 80 by default) is scoped to prose. `tables:
+//          false` and `code_blocks: false` exempt table rows and fenced code
+//          blocks, because both hold content that is wide on purpose and
+//          cannot be reflowed: a table row must stay one line to render, and
+//          the fenced blocks here are a directory tree, a PlantUML diagram and
+//          command lines, where wrapping would break what they show. Prose is
+//          still held to 80, so a runaway sentence is a finding and gets
+//          wrapped rather than exempted.
 //
 // globs  - the authored documentation: root pages, the user manual, and the
 //          agent guide's topic files under agents/ (AGENTS.md is the index that
@@ -12,6 +21,12 @@
 //          what a test parses, so it is excluded rather than fixed. It also
 //          applies when a reviewer passes file arguments explicitly.
 {
+  "config": {
+    "MD013": {
+      "tables": false,
+      "code_blocks": false
+    }
+  },
   "globs": ["*.md", "docs/**/*.md", "agents/*.md"],
   "ignores": ["tests/Parsers/snapshots/rototrobot-raw.md"]
 }
