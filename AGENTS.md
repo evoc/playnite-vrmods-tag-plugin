@@ -23,7 +23,6 @@ matches — records the source link in the game's Links section.
 dotnet build              # plugin + tests; 0 errors AND 0 warnings
 dotnet test               # the full suite
 dotnet build -c Release   # the configuration CI builds
-pwsh tools/Check-WarningFreeLog.ps1 <build-log>   # CI's analyzer gate, locally
 git log --oneline -10     # subjects must be Conventional Commits
 
 ```
