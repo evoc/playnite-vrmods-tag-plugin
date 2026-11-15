@@ -37,7 +37,10 @@ and **timer threads** (the scan interval, the new-game debounce).
   meant the catalog walk and one decision lookup per cached entry, on
   Playnite's UI thread, per game. Before marshaling, `RunOnUiThread` calls
   `EnsureUiHopIsSafe()`, which refuses a hop from a thread holding the new-game
-  lock (a log line and an `InvalidOperationException`). Why that is a rule and
+  lock: it logs `VRMod Tag Service: refused to wait on Playnite's UI thread`
+  and throws `InvalidOperationException`. That prefix is what to grep for in
+  `extensions.log`; the message itself names no file, because whoever reads
+  that log has an installed extension, not a checkout. Why that is a rule and
   not a caution: Playnite runs a progress action on a worker task and shows
   its window with `ShowDialog` (`ProgressViewViewModel.ActivateProgress` →
   `window.CreateAndOpenDialog(this)`), so the UI thread *does* pump while a
