@@ -212,8 +212,8 @@ jobs:
           exit 1
 
       - name: "Format gate (whitespace + style)"
-        # AGENTS.md requires a 0-warning build but says nothing about
-        # formatting, so style drift was invisible. `dotnet format
+        # agents/build-and-test.md requires a 0-warning build but says
+        # nothing about formatting, so style drift was invisible. `dotnet format
         # --verify-changes` (the flag the review quoted) does not exist in SDK
         # 8; these two subcommands do, and both are clean today.
         run: |
@@ -277,13 +277,14 @@ jobs:
                       "project framework entry(ies).")
 
       - name: "Code analysis (gate)"
-        # AGENTS.md requires a 0-warning build, and the plugin project turns the
-        # .NET analyzers on (net462 leaves them off by default). Neither
+        # agents/build-and-test.md requires a 0-warning build, and the plugin
+        # project turns the .NET analyzers on (net462 leaves them off by
+        # default). Neither
         # `dotnet build` nor `dotnet test` fails on a warning, so the gate names
         # them: any analyzer warning (": warning CA") fails the review. The
         # build already runs every family; .editorconfig carries the families
         # that were judged and excluded, each with its reason, so this step
-        # covers every family not excluded there (AGENTS.md, "Analyzers").
+        # covers every family not excluded there (agents/analyzers.md).
         # Restore warnings (NU...) are out of scope - they come from third-party
         # packages, not from this code.
         shell: pwsh
@@ -308,7 +309,8 @@ jobs:
           if ($found.Count -gt 0) {
             $found | ForEach-Object { Write-Host $_.Line }
             Write-Host "Analyzer warnings found: $($found.Count)"
-            Write-Host "::error::build must stay warning-free (AGENTS.md)"
+            Write-Host "::error::build must stay warning-free " +
+              "(agents/build-and-test.md)"
             exit 1
           }
           exit $buildExit

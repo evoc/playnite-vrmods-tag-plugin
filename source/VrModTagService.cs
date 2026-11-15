@@ -2509,6 +2509,11 @@ namespace Playnite.VRMods
         /// dialog now surfaces (see <see cref="VrModReviewDialog.ProgressFailureText"/>). Only holds
         /// taken through <see cref="NewGameLock"/> are visible - a raw <c>lock (_newGameLock)</c>
         /// bypasses this, which is why the field's comment forbids it.
+        ///
+        /// The rule this enforces, and what a caller does instead of hopping, are in
+        /// <c>agents/threading.md</c>. That pointer lives here and not in the message
+        /// below: the message is read from an installed extension, where nothing of
+        /// this repo is on disk to open.
         /// </summary>
         internal void EnsureUiHopIsSafe()
         {
@@ -2516,7 +2521,7 @@ namespace Playnite.VRMods
                 return;
             var message = "VRMod Tag Service: refused to wait on Playnite's UI thread while holding "
                 + "the new-game lock (lock-order inversion: the UI thread pumps library-change "
-                + "handlers that take that lock). See the Threading contract in AGENTS.md.";
+                + "handlers that take that lock).";
             _logger.Error(message);
             throw new InvalidOperationException(message);
         }
