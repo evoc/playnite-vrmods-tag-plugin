@@ -1,12 +1,13 @@
 # VRMod Tags — User Manual
 
 **VRMod Tags** is a Playnite add-on that finds VR mods, ports, and conversions
-for the games in your library. It matches your games against twelve
+for the games in your library. It matches your games against thirteen
 community-curated sources (PCVR Central, UeVR Profiles, RototRobot VRMods-List,
-PCVR Mods Installer Hub, CompoundVR, Mr Survivor VR HUB, Steam Curator “UEVR
-Compatibility”, Steam Curator “VorpX Games”, REFramework, and Flat2VR Studios),
-plus two opt-in sources — VorpX and Luke Ross (R.E.A.L. VR) — that are disabled
-by default and stay out of every scan until you enable them in the settings.
+PCVR Mods Installer Hub, CompoundVR, Mr Survivor VR HUB, UnflatVR, Steam
+Curator “UEVR Compatibility”, Steam Curator “VorpX Games”, REFramework, and
+Flat2VR Studios), plus two opt-in sources — VorpX and Luke Ross (R.E.A.L. VR)
+— that are disabled by default and stay out of every scan until you enable
+them in the settings.
 For every match you accept, it tags the game with `VRMod` (plus category tags)
 and adds a link to the mod page, so VR-playable games are always easy to find.
 

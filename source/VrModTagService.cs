@@ -853,7 +853,7 @@ namespace Playnite.VRMods
         /// <see cref="VrModNameMatcher.StripEditionTail"/> for the word list, why it is a tail and not a
         /// word-level strip, and the pairs it was measured against. Library names are the side that
         /// carries this wording: 150 of 2 520 real library names, against 5 of 695 real catalog headings
-        /// (PlayniteVRmods-dev/tools/NormAb, run over this library and the live catalog headings).
+        /// (an out-of-repo A/B harness, run over this library and the live catalog headings).
         ///
         /// null when the name has no such tail - 94 % of the library names measured here - which is how
         /// the extra comparison stays free where there is nothing to gain.

@@ -17,7 +17,9 @@
 | `VRMod UUVR` | PCVR Central (each mod's `framework`) | UUVR, the Unity-engine injector. It is its own tag rather than `VRMod UEVR` because UEVR is the Unreal-engine tool — tagging a Unity game `UEVR` names the wrong tool and the wrong engine. |
 | `VRMod Depth3D` | PCVR Central (each mod's `framework`) | A ReShade depth-shader 3D effect. The site itself calls this "not a real VR conversion", so it is its own tag rather than being mixed in with the real VR injectors. |
 | `VRMod Other` | PCVR Central (each mod's `framework`) | The site's catch-all for a mod whose method fits none of its framework categories. |
-| — (catalog source: no tag of its own) | PCVR Central, PCVR Mods Hub, Mr Survivor, CompoundVR | These four are catalog categories (`VrModCategories.IsCatalogCategory`): the source name never becomes a tag — the source link on the game carries the provenance. PCVR Central still contributes the framework categories and the quality/motion/status facets below. |
+| `VRMod Quest` | UnflatVR | The game's VR comes as a port that runs on a standalone Meta Quest headset. It sits next to the umbrella tag rather than instead of it: the game is playable in VR, but not from the PC that holds this library entry. |
+| `VRMod SteamFrame` | UnflatVR | The same claim for a standalone Steam Frame headset. |
+| — (catalog source: no tag of its own) | PCVR Central, PCVR Mods Hub, Mr Survivor, CompoundVR, UnflatVR | These five are catalog categories (`VrModCategories.IsCatalogCategory`): the source name never becomes a tag — the source link on the game carries the provenance. PCVR Central still contributes the framework categories and the quality/motion/status facets below; UnflatVR still contributes the two headset tags above, which describe a headset rather than a framework. |
 | `VRMod 6DOF` | REFramework (facet) | The mod supports 6DOF tracking. |
 | `VRMod First Person` | (facet) | The mod is a first-person experience. |
 | `VRMod Third Person` | (facet) | The mod is a third-person experience. |
@@ -86,6 +88,9 @@ community projects. Thanks to all the maintainers:
 - [RototRobot VRMods-List](https://rototrobot.github.io/VRMods-List/)
   — community-curated, categorized list of VR mods (Full Motion
   Controls, UEVR, Motion Gesture, Head Tracked, Dedicated)
+- [UnflatVR](https://unflatvr.com/) — hand-curated directory of flat-screen
+  games that gained VR through a mod: one page per mod, a hub per game, a
+  Steam App ID for most games, and its own A–D grade per mod
 - [PCVR Mods Installer Hub](https://github.com/Mr-Nlce/PCVR-Mods-Installer-Hub)
   — Mr. Nlce's installer hub catalog
 - [CompoundVR](https://compoundvr.com/) — curated

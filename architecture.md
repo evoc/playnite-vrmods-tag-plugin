@@ -32,7 +32,7 @@ its detail lives in `agents/`.
 runs without Playnite's PMW wrapper plus the parser plumbing tests
 — `BaseVrModParserFetchTests`, `BaseVrModParserFetchFailureTests`,
 `PcvrCentralParseResilienceTests`, `UeVrProfilesFirebaseConfigTests`.
-`tests/Parsers/` (12 files) holds one behavioural suite per source
+`tests/Parsers/` (13 files) holds one behavioural suite per source
 (`PcvrCentralParserTests`, `VorpXParserTests`, …) that asserts what a
 given site's HTML turns into. `tests/Integration/` (1 file) is the
 PMW-wrapped end-to-end surface. So a parser is usually covered from
@@ -56,8 +56,8 @@ conservative: it never tags a game on a plain substring, and every match starts
 
 | Object | Type | What it is |
 | --- | --- | --- |
-| **Source** | `IVrModSource` (+ `BaseVrModParser`) | One external site/API. Twelve registrations from eleven parser classes (`VrModTagPlugin.cs:119-136`; `SteamCuratorParser` is registered twice, for two curator feeds). Has an `IsEnabled` the user toggles and a `ChangeIdentifier` for caching. |
-| **Entry** | `VrModEntry` | One source's claim about *one* game: name, a set of categories, optional Steam App ID, optional 6DOF/quality facet, optional per-entry page URL. |
+| **Source** | `IVrModSource` (+ `BaseVrModParser`) | One external site/API. Thirteen registrations from twelve parser classes, added in `VrModTagPlugin`'s constructor (`VrModTagPlugin.cs:122-140`; `SteamCuratorParser` is registered twice, for two curator feeds). Has an `IsEnabled` the user toggles and a `ChangeIdentifier` for caching. |
+| **Entry** | `VrModEntry` | One source's claim about *one* game: name, a set of categories, optional Steam App ID, optional 6DOF/quality facet, the page URL it points at, and every listing URL it was seen at. |
 | **Match** | `VrModReviewMatchEntry` | A source **Entry** joined to a **Playnite `Game`**. The single source of truth is its `Status` (`Pending`/`Accepted`/`Rejected`). |
 | **Decision** | `MatchDecision` (enum) + a string **key** | What the user decided about a match. Persisted in `config.json`, keyed by (source, listing **identity**, game **Id**) — per mapping, not per category (see *Decisions & persistence*). |
 | **Tag** | Playnite `Tag` | The persisted output. Umbrella `VRMod`, category `VRMod {category}`, facets `VRMod 6DOF` / `VRMod {quality}`. |
@@ -72,8 +72,8 @@ so they are easy to find and safe to clean up):
 - **Umbrella** `VRMod` — always added to every matched game.
 - **Category** `VRMod {category}` — e.g. `VRMod UEVR`, `VRMod Flat2VR Port`,
   `VRMod REFramework`. One per known category on the entry, except
-  **catalog** categories (`IsCatalogCategory`, `VrModCategories.cs:257`:
-  PCVR Central, PCVR Mods Hub, Mr Survivor, CompoundVR), which contribute
+  **catalog** categories (`IsCatalogCategory`, `VrModCategories.cs:266`:
+  PCVR Central, PCVR Mods Hub, Mr Survivor, CompoundVR, UnflatVR), which contribute
   no category tag of their own — only the umbrella (see "Cross-source
   overlap" below). An enriched catalog source can still emit *framework*
   categories alongside its catalog category: PCVR Central's per-game
@@ -87,24 +87,25 @@ so they are easy to find and safe to clean up):
   `Gamepad Only`, `No Motion`) and per known **mod status** (`Active`,
   `Update Detected`, `Outdated`, `Broken`, `Abandoned`) — `TagNameForQuality`
   / `TagNameForStatus`, applied by `VrModCategories.TagNamesFor`
-  (`VrModCategories.cs:317`; `TagNamesFor(VrModEntry)` overload at `:362`).
+  (`VrModCategories.cs:326`; `TagNamesFor(VrModEntry)` overload at `:371`).
 
 **One vocabulary, checked in one place.** `VrModCategories.KnownTagValues`
-(`VrModCategories.cs:160`) is the list of every value the plugin may turn
-into a `VRMod {value}` tag: the category constants (frameworks, the four
-catalogs, Full Motion Controls, Motion Gesture, Head-Tracked), the four
-quality grades, the four motion levels, the five mod statuses, and the
-three fixed facet values. Tag names are built by concatenating a value
-that a website wrote onto the umbrella prefix, so the check exists to
-stop a parser forwarding raw page text (a mod title, an HTML fragment,
-a 200-character description) from becoming a tag in the user's library
-(`IsValidTagName`, `VrModCategories.cs:211`). An off-vocabulary value is
-**dropped and reported**: `DropUnknownFeatureValues` (`VrModTagService.cs:369`)
-collects them with `UnknownTagValues` (`VrModCategories.cs:189`), removes
-them from the entry, logs the dropped values, and puts the same line in
-that source's run log (`VrModTagService.cs:369-390`) — so a site renaming
-its categories shows up in the log instead of looking like games quietly
-losing category tags. See also **Source category allow-lists** below.
+(`VrModCategories.cs:168`) is the list of every value the plugin may turn into
+a `VRMod {value}` tag: the category constants (frameworks, the five catalogs,
+the two standalone-headset values, Full Motion Controls, Motion Gesture,
+Head-Tracked), the four quality grades, the four motion levels, the five mod
+statuses, and the three fixed facet values. Tag names are built by
+concatenating a value that a website wrote onto the umbrella prefix, so the
+check exists to stop a parser forwarding raw page text (a mod title, an HTML
+fragment, a 200-character description) from becoming a tag in the user's
+library (`IsValidTagName`, `VrModCategories.cs:220`). An off-vocabulary value
+is **dropped and reported**: `DropUnknownFeatureValues`
+(`VrModTagService.cs:369`) collects them with `UnknownTagValues`
+(`VrModCategories.cs:198`), removes them from the entry, logs the dropped
+values, and puts the same line in that source's run log
+(`VrModTagService.cs:369-390`) — so a site renaming its categories shows up in
+the log instead of looking like games quietly losing category tags. See also
+**Source category allow-lists** below.
 
 Tag *presence* means "accepted for this game"; the per-decision detail
 (which source, when, by whom) lives in `config.json`, not on the tag.
@@ -132,10 +133,24 @@ recoverable from the tag list; it is kept in `VrModEntry.AdditionalInfo`,
 where PCVR Central writes a per-mod feature summary (`PcvrCentralParser.cs:220`
 fills `AdditionalInfo` from `BuildModFeaturesInfo`, declared at `:660`).
 
+**URLs are two fields, on purpose.** The `SourceUrls` list (`VrModEntry.cs:318`)
+feeds the decision key, because `MakeDecisionKey` (`:489`) passes
+`DecisionKeyComponent` (`:464`) through it — so its contents are load-bearing for
+decisions users already stored. The `ListingUrls` list (`:374`) holds every URL
+the entry was seen at — the page a bulk parser fetched, plus the item links found
+inside the data — and never takes part in a key. A source whose whole catalogue
+arrives in one request has no per-item URL of its own; its item links live here,
+so a later per-item fetch (UnflatVR's phase 2, see `external-references.md`) does
+not have to read the catalogue again. A parser that finds per-item URLs writes
+them to `ListingUrls`, **not** to `SourceUrls`: the latter would move every
+stored decision key and re-queue every accepted match. `MergeFeaturesInto`
+(`BaseVrModParser.cs:1108`) merges the listing URLs together with the other
+fields when one game arrives from a source more than once.
+
 Within one **entry** the categories are a **set** (`VrModEntry.Categories`):
 a single mod can yield several categories (e.g. a RototRobot mod that
 is both a UEVR profile *and* a full-motion rig yields `VRMod UEVR` *and*
-`VRMod Full Motion Controls`). `Category` remains a legacy single-value alias
+`VRMod Full Motion`). `Category` remains a legacy single-value alias
 (writing it appends to `Categories`); `Categories` is the source of truth. The
 same applies to the graded facets: `Qualities`, `Motions` and `Statuses` are
 collections and `Quality` / `Motion` (`VrModEntry.cs:231`, `:250`) are their
@@ -337,7 +352,8 @@ the sequel false positives — `hl` must not match "Half-Life 2"):
    Curator** reads the `data-ds-appid` attribute of each curator item and
    builds the listing's store URL from it; **Flat2Vr** and **RototRobot**
    read it out of the Steam store link on the listing card; **UeVR Profiles**
-   reads the `appID` field of its Firestore record. CompoundVR, VorpX,
+   reads the `appID` field of its Firestore record; **UnflatVR** reads the App ID
+   its own catalogue resolved (602 of its 715 hubs carry one). CompoundVR, VorpX,
    LukeRoss, ReFramework and the two hubs (`MrNlceHub`, `MrSurvivorHub`)
    publish none. On the library side an id comes from the game's `Links`
    to `https://store.steampowered.com/app/…` (`TryGetSteamAppIdFromLink`)
@@ -378,7 +394,9 @@ the sequel false positives — `hl` must not match "Half-Life 2"):
    word, and stops at the first word that is not packaging (`Thief Gold`
    keeps `gold`, `Outer Wilds` keeps `wilds`). Extra key, never a rewrite,
    and on the library side only — measured on 695 listing titles against
-   2 520 library names (`PlayniteVRmods-dev/tools/NormAb`): 144 pairs
+   2 520 library names by the out-of-repo A/B harness (what it is, and what
+   it measured, are under [Unusual things to know](#unusual-things-to-know)):
+   144 pairs
    with the rule against 135 without it, better than the comparison
    plugin's word-level strip, which scored 142 and cut `wilds` out of
    `Outer Wilds`, pairing *Outer Wilds VR* with *The Outer Worlds* at 0.818.
@@ -546,19 +564,19 @@ path like any other row, which is the only way a suggestion becomes a match.
 
 - **Key**: `VrModEntry.MakeDecisionKey(sourceId, gameId)` →
   `VrModNameMatcher.MakeDecisionKey` → `"{sourceId}||{identity}||{gameId:D}"`
-  (`VrModEntry.cs:479-480`, `VrModNameMatcher.cs:511-515`). In the service
+  (`VrModEntry.cs:488-489`, `VrModNameMatcher.cs:511-515`). In the service
   every read, write and clear of a mapping goes through one funnel,
   `EntryDecisionKey` (`VrModTagService.cs:1961-1962`). The middle component is
   the listing's **identity** (`VrModEntry.DecisionKeyComponent`, computed
-  at `VrModEntry.cs:442`, documented at `:409-441`): `steam:<App ID>`,
+  at `VrModEntry.cs:464`, documented at `:431-462`): `steam:<App ID>`,
   else `url:<host><path>`, else the name. So a listing that keeps its
   App ID or its page URL keeps its decision across a site rename, and
   a name-shaped key only happens when the source names listings; the
   listing's display name is what the review surface shows, never the key.
   Because the key is identity, a rename does not resurrect an answered
-  question: `TryRekeyDecision` (`VrModTagSettings.cs:709-759`) moves the
-  decision, its timestamp and its tag baseline to the new key on the scan
-  that first sees the listing, and legacy name-shaped keys are migrated
+question: `TryRekeyDecision` (`VrModTagSettings.cs:838-888`) moves the
+decision, its timestamp and its tag baseline to the new key on the scan
+that first sees the listing, and legacy name-shaped keys are migrated
   once (`RemoveLegacyNameKeyedDecisions`, `:916`). Identity changes the
   **key**, not how a listing is **found**: an App-ID listing still goes
   through name matching when the library has no Steam link for it (see
@@ -574,15 +592,15 @@ path like any other row, which is the only way a suggestion becomes a match.
   string), `SourceTagsByDecision` (key → the newline-joined tag names
   that decision recorded; only an **Accepted** decision carries this
   baseline), and `DecisionTimestamps` (key → ISO 8601 UTC stamp). All
-  three are published copy-on-write on every change (`SetDecisionByKey`
-  `VrModTagSettings.cs:577`, `ClearDecisionByKey` `:612`) so a walker
+three are published copy-on-write on every change (`SetDecisionByKey`
+`VrModTagSettings.cs:706`, `ClearDecisionByKey` `:741`) so a walker
   never sees a half-written map; code that enumerates decisions
-  while a scan may write takes `SnapshotMatchDecisions` (`:484`).
+  while a scan may write takes `SnapshotMatchDecisions` (`:613`).
 - **The stamp** is created on first record of the pair
-  (`EnsureDecisionTimestampUtc`, `VrModTagSettings.cs:988`) and
+  (`EnsureDecisionTimestampUtc`, `VrModTagSettings.cs:1117`) and
   feeds the dialog's `Saved at` column. Every decision write
-  **overwrites** it with the write time (`SetDecisionByKey`,
-  `VrModTagSettings.cs:577-605`, stamp written at `:586`), so for
+**overwrites** it with the write time (`SetDecisionByKey`,
+`VrModTagSettings.cs:706-733`, stamp written at `:715`), so for
   a decided pair it is the last decision time, not the discovery
   time. There is no 5-minute first-seen rule anywhere in the code.
 - **Tag presence** ⟺ an Accepted decision, **or** a Pending match a scan
@@ -810,10 +828,10 @@ classDiagram
     VrModReviewMatchEntry --> MatchDecision
 ```
 
-Eleven parser classes extend `BaseVrModParser` and differ only in
+Twelve parser classes extend `BaseVrModParser` and differ only in
 how they fetch and parse; the diagram draws the base once rather
-than eleven times. What the diagram deliberately does **not**
-draw: the eleven parsers (see **Source implementations** below),
+than twelve times. What the diagram deliberately does **not**
+draw: the twelve parsers (see **Source implementations** below),
 `VrModSourceRowViewModel` (one settings-grid row per source, held by
 `VrModSettingsViewModel.SourceRows`), the `VrModSettingsView` UserControl,
 `VrModSourceLogDialog`, and the two network classes `HttpHostGate` and
@@ -841,8 +859,8 @@ obvious from the code and that have caused bugs before.
   test `NormalizeForMatchFast_MatchesCanonicalNormalize` locks
   them to identical output — if one changes, the test fails.
 - **Rules from the comparison plugin that were measured and deliberately not
-  copied.** The dev repo's `tools/NormAb` harness (a sibling checkout, not part
-  of this repo) compiles this repo's `VrModNameMatcher` and `VrModTokenRun` next
+  copied.** An out-of-repo A/B harness (not part of this repo) compiles this
+  repo's `VrModNameMatcher` and `VrModTokenRun` next
   to the other plugin's `TitleNormalizer` and runs both over 2 520 real library
   names against 695 catalog headings. Measured 2026-11-02 against this history:
   **144 pairs match under our rules, 110 under theirs, 95 under both, 49 match
@@ -928,11 +946,11 @@ obvious from the code and that have caused bugs before.
 - **A decision key is a listing identity, not a name.**
   `MakeDecisionKey(sourceId, listingIdentity, gameId)` embeds the
   listing's App ID, else its page URL, and only a name when the
-  source names listings (`DecisionKeyComponent`, `VrModEntry.cs:442`,
+  source names listings (`DecisionKeyComponent`, `VrModEntry.cs:464`,
   funnelled through `EntryDecisionKey`, `VrModTagService.cs:1961-1962`)
   plus the Playnite game's stable Id. So a source renaming a listing
-  does **not** resurrect an answered question: `TryRekeyDecision`
-  (`VrModTagSettings.cs:709-759`) moves the decision, its timestamp
+does **not** resurrect an answered question: `TryRekeyDecision`
+(`VrModTagSettings.cs:838-888`) moves the decision, its timestamp
   and its tag baseline to the new key on the scan that first sees the
   listing. A source that only names listings keeps a name-shaped key
   **on purpose** — with no identity to key on, a rename *is* a new
@@ -1146,12 +1164,21 @@ public class VrModSourceRegistry
 ```
 
 There is **no `CreateDefault(...)` factory and no `GetSource(sourceId)`**:
-`VrModTagPlugin` constructs and registers all twelve sources itself
-(`VrModTagPlugin.cs:119-136`; registration order is the order the settings
+`VrModTagPlugin` constructs and registers all thirteen sources itself
+(`VrModTagPlugin.cs:122-140`; registration order is the order the settings
 page lists them). Anything that needs one source filters the enabled list.
 
 `GetEnabledSources()` **already** filters by `IsEnabled` —
 never add a second `.Where(s => s.IsEnabled)` in the service.
+
+**The only fetch seam is `FetchEntriesAsync()`.** The service's one call site
+is `GetEntriesAsync` (`VrModTagService.cs:313`), which calls it at `:324` once
+per enabled source per scan and owns the cache and the per-source error
+isolation around it. A source that needs a *second* request per item —
+UnflatVR's phase 2 — pages inside its own `ParseEntries`, under the base
+parser's delay and that same isolation. Adding a second fetch method to the
+interface is a trap: nothing in the service would call it, so it reads as a
+seam and never runs.
 
 ### Service — `VrModTagService`
 
@@ -1369,9 +1396,10 @@ public class VrModTagSettings
 }
 ```
 
-Every accessor is `*ByKey`: callers build the key with
-`VrModNameMatcher.MakeDecisionKey(sourceId, listingIdentity, gameId)`
-and pass it in (`VrModTagSettings.cs:548-882`). There is no
+Every accessor is `*ByKey` — from `GetDecisionByKey` (`VrModTagSettings.cs:677`)
+to `ClearDecisionsByKey` (`:806`). Callers build the key with
+`VrModNameMatcher.MakeDecisionKey(sourceId, listingIdentity, gameId)` and pass it
+in. There is no
 `(sourceId, sourceGame, gameId)` overload, no `DecisionEntry` type, and no
 `sourceGame` parameter on the decision APIs. The three dictionaries are the
 storage: **three flat maps**, not a per-key object, and each write replaces
@@ -1454,13 +1482,15 @@ public class VrModReviewMatchEntry : INotifyPropertyChanged
 | `MrNlceHubParser` | `raw.githubusercontent.com/Mr-Nlce/PCVR-Mods-Installer-Hub/main/README.md` | PCVR Mods Hub | "Supported games" list |
 | `MrSurvivorHubParser` | `mrsurvivor-installers.com` catalog `<table>` | Mr Survivor | — |
 | `CompoundVrParser` | `compoundvr.com/games/` (flat-to-VR intelligence catalog) | CompoundVR (catalog) | per-game deep link `compoundvr.com/<slug>` |
+| `UnflatVrParser` | `unflatvr.com/steam-library-check/` — the whole catalogue arrives as one inline JSON island in that page | UnflatVR (catalog) + Quest / SteamFrame | one request for 715 hubs; Steam App ID on 602 of them; per-mod grade and platform shown in `AdditionalInfo`, never as a tag |
 | `SteamCuratorParser` | `store.steampowered.com/curator/{id}/ajaxgetcuratorrecommendations/render/` | per registration: UEVR / VorpX | **registered twice** (`SteamCuratorUEVR` curator 44946997, `SteamCuratorVorpX` curator 38688993); `SourceUrl` = the game's Steam app page, Steam App ID carried |
 | `VorpXParser` | `vorpx.com/supported-games/` | VorpX | **disabled by default** (opt-in capability list) |
 | `LukeRossParser` | `patreon.com/realvr` (R.E.A.L. VR) | LukeRoss | **disabled by default** (opt-in author list) |
 
-Twelve registrations from these eleven classes, in the order of
-`VrModTagPlugin.cs:119-136`: PCVR Central, UeVR Profiles, RototRobot, Mr
-Nlce, CompoundVR, Mr Survivor, Steam Curator UEVR, Steam Curator VorpX,
+Thirteen registrations from these twelve classes, in the order of
+`VrModTagPlugin`'s constructor (`VrModTagPlugin.cs:122-140`): PCVR Central,
+UeVR Profiles, RototRobot, UnflatVR,
+Mr Nlce, CompoundVR, Mr Survivor, Steam Curator UEVR, Steam Curator VorpX,
 REFramework, Flat2VR, VorpX, Luke Ross — best source first, and the two opt-in
 lists last by design. That is also the order the settings grid lists them in
 (`VrModSourceRegistry.Sources` is the enumeration the rows are built from). A
@@ -1491,8 +1521,8 @@ same category (RototRobot "UEVR Profiles" **and** the UeVR source →
 - **Framework/injector** categories (UEVR, REFramework, Flat2VR Port, Dedicated,
   VorpX, LukeRoss) are **meaningful** — they tell the user *which tool* enables
   VR, so a game tagged both `VRMod UEVR` and `VRMod REFramework` is useful.
-- **Catalog** categories (PCVR Central, PCVR Mods Hub, Mr Survivor, CompoundVR
-  — `VrModCategories.IsCatalogCategory`) are **coverage-only** — a catalog
+- **Catalog** categories (PCVR Central, PCVR Mods Hub, Mr Survivor, CompoundVR,
+  UnflatVR — `VrModCategories.IsCatalogCategory`) are **coverage-only** — a catalog
   entry asserts "VR mods exist for this game" but does not name a tool, so it
   contributes **no category tag** of its own: the game just gets the umbrella
   `VRMod` tag, and the source name + deep-link on the review row carry the
@@ -1543,11 +1573,11 @@ a `ScrollViewer` wrapping a `StackPanel MaxWidth="980"`.
   the per-host politeness pause, the new-game debounce and batch
   size (`DefaultNewGameDebounceMs` `:230` 5 s, `MaxPerGameScanBatch` `:244` 20),
   and the Playnite notification an automatic scan leaves
-  behind (`ShowAutoScanNotification`, `VrModTagPlugin.cs:548`).
+  behind (`ShowAutoScanNotification`, `VrModTagPlugin.cs:984`).
 - **Per-source status.** `SourceStatuses` is a
   `Dictionary<string, SourceStatus>` keyed by the lowercased source Id
-  (`VrModTagSettings.cs:362`, keyed at `VrModTagService.cs:576-578`);
-  `SourceStatus` (`VrModTagSettings.cs:1029`) carries `LastScanTime`,
+(`VrModTagSettings.cs:378`, keyed at `VrModTagService.cs:576-578`);
+`SourceStatus` (`VrModTagSettings.cs:1158`) carries `LastScanTime`,
   `LastResult`, `LastEntryCount`, `LastError`, `LastChangeId`, `LastTagCount`
   / `LastTagCountApplied`, `LastLinkCount` / `LastLinkCountApplied`,
   `LastRunLog`. The whole record is `[DontSerialize]`: it lives
@@ -1612,7 +1642,7 @@ Icon: icon.png
     <Nullable>enable</Nullable>
     <!-- Roslyn analyzers are OFF by default on a net462 target (the SDK turns them on for
          net5+ only), so none of the framework's own rules ever ran on a codebase that parses
-         twelve attacker-chosen websites and writes into the Playnite library. The posture is
+         thirteen attacker-chosen websites and writes into the Playnite library. The posture is
          "every family on unless a family has been judged and excluded with a written reason":
          AnalysisMode=All enables all of them and .editorconfig carries the exclusions, each
          with why. Adding a new exclusion needs a reason at the exclusion site. -->
@@ -1661,12 +1691,15 @@ Icon: icon.png
   43200 min (30 days); fuzzy threshold default 0.8f, validated 0.50–1.00.
 - **Network shape** (all three exist purely because the URLs come from
   sites the plugin does not control): at most 4 HTTP requests in flight
-  overall and 1 per host (`HttpHostGate.Shared`, `HttpHostGate.cs:66`;
-  the limits are `:50` and `:56`), a host's requests spaced by that
-  host's `Crawl-delay` up to 30 s, robots.txt read with a 64 KB cap
-  with `Disallow` deliberately not enforced (`RobotsPolicy.cs:14-21`,
-  `:46`), redirects decided in code — `AllowAutoRedirect = false`
-  (`BaseVrModParser.cs:47`), at most 5 hops (`MaxRedirectHops`, `:223`), host
+  overall and 1 per host (`HttpHostGate.Shared`, `HttpHostGate.cs:66`; the
+  limits are `DefaultPerHostConcurrency` `:50` and
+  `DefaultMaxConcurrentRequests` `:56`), a host's requests spaced by that
+  host's `Crawl-delay` up to 30 s, robots.txt read under a byte cap of
+  `MaxRobotsBytes` (`RobotsPolicy.cs:46`) with `Disallow` read but
+  deliberately not enforced — that scope decision is argued in the class
+  comment of `RobotsPolicy` — and redirects decided in code,
+  `AllowAutoRedirect = false` on `_sharedHandler` (`BaseVrModParser.cs:47`),
+  at most 5 hops (`MaxRedirectHops`, `:223`), host
   equality (accepting the `www.` variant) plus port, `AllowedRedirectHosts`
   as the only opt-out (`:235`, applied by `ClassifyRedirectTarget`
   `:269-321`) — and 3 attempts per request (`MaxHttpAttempts`,
@@ -1686,11 +1719,11 @@ Icon: icon.png
   source failed — a source that returns zero entries is a success
   (see the data-loss gate under *Unusual things to know*).
 - A category/quality/motion value that is not in
-  `VrModCategories.KnownTagValues` (`VrModCategories.cs:160`)
+  `VrModCategories.KnownTagValues` (`VrModCategories.cs:168`)
   never becomes a tag: it is dropped from the entry and
-  reported in the source's run log (`UnknownTagValues`, `:189`).
-  Tag names are additionally length- and character-checked
-  (`IsValidTagName`, `:211`) because they embed text a website wrote.
+reported in the source's run log (`UnknownTagValues`, `:198`).
+Tag names are additionally length- and character-checked
+(`IsValidTagName`, `:220`) because they embed text a website wrote.
 - Removing a `VRMod*` tag manually from a game clears the associated decision.
 - Pending matches auto-apply when there is no review callback
   (single-game scan): their tags are written now, but the decision
@@ -1711,7 +1744,7 @@ source/
 ├── HttpHostGate.cs                # per-host + global request gate, crawl-delay spacing
 ├── RobotsPolicy.cs                # robots.txt: Crawl-delay honoured, Disallow not enforced
 ├── VrModEntry.cs                  # data model (name, categories, facets, decision key)
-├── VrModSourceRegistry.cs         # source registration (twelve registrations, eleven classes)
+├── VrModSourceRegistry.cs         # source registration (thirteen registrations, twelve classes)
 ├── VrModTagService.cs             # core: decision-aware scan, tag apply/reconcile/remove
 ├── VrModNameMatcher.cs            # shared matching utility (Levenshtein + decision keys)
 ├── MatchDecision.cs               # Pending / Accepted / Rejected
@@ -1725,10 +1758,11 @@ source/
 ├── VrModHelp.cs                   # resolves the shipped README/docs path
 ├── WebUrl.cs                      # small URL helper
 ├── Properties/AssemblyInfo.cs
-├── Parsers/                       # 11 parser classes for 12 registrations
+├── Parsers/                       # 12 parser classes for 13 registrations
 │   ├── PcvrCentralParser.cs
 │   ├── UeVrProfilesParser.cs
 │   ├── RototRobotVrModParser.cs
+│   ├── UnflatVrParser.cs          # one page, one inline JSON island, the whole catalogue
 │   ├── MrNlceHubParser.cs
 │   ├── CompoundVrParser.cs
 │   ├── MrSurvivorHubParser.cs

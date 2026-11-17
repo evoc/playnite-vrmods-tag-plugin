@@ -100,7 +100,7 @@ public class Link
 ### Steam App ID Extraction
 
 Steam App IDs are read by two helpers in `VrModTagService` —
-`TryGetSteamAppIdFromLink` (`source/VrModTagService.cs:964`) and
+`TryGetSteamAppIdFromLink` (`source/VrModTagService.cs:958`) and
 `TryGetSteamAppIdFromProviderId` (`:993`) — and the library side
 collects them per game in `GetGameSteamAppIds`. What they accept:
 
@@ -120,7 +120,7 @@ collects them per game in `GetGameSteamAppIds`. What they accept:
 
 Canonical form both directions: digits only, no longer than a real
 App ID, leading zeros stripped, `0` rejected (`TryCanonicalizeAppId`,
-`VrModTagService.cs:1000`). The per-game list is `ComputeGameSteamAppIds`
+`VrModTagService.cs:994`). The per-game list is `ComputeGameSteamAppIds`
 (`:1022`): store links first, then the provider id, deduped in first-seen order.
 Source-side ids pass the same shape gate (`VrModEntry.NormalizeSteamAppId`);
 a value that cannot be an App ID is dropped rather than matched on.
@@ -175,13 +175,13 @@ game.TagIds?.Remove(tag.Id);
    its `Links` (`store.steampowered.com/app/{id}/`)
    and, for a Steam-integrated game, its `GameId`
 3. Compare the ids: `SteamIdsMatch` (`source/VrModTagService.cs:1102`)
-   pairs a listing with a game; `SteamIdsConflict` (`:1111`)
+   pairs a listing with a game; `SteamIdsConflict` (`:1105`)
    refuses a pairing when both sides carry ids and none agree
 
 ```csharp
 // The candidate walk, in VrModTagService.cs. Four callers run it once
 // per listing - their call sites are :1399 FindSuggestedGames, :1645
-// RunFullScanAsync, :1886 BuildReviewMatchesFromCache, :4061
+// RunFullScanAsync, :1861 BuildReviewMatchesFromCache, :4061
 // ReconcileSourceLinksForSource - each against the indexes
 // BuildGameIndex (:630) froze at the start of this scan, so a decision
 // taken in this scan's review dialog lands at the next scan.
@@ -214,7 +214,7 @@ on game, or no Steam ID on source entry):
    (`source/VrModTagService.cs:844`), the same rules in one
    allocation-light pass, held equal to the canonical one by the
    differential test `NormalizeForMatchFast_MatchesCanonicalNormalize`
-   (`tests/Unit/VrModNameMatcherTests.cs:572`)
+   (`tests/Unit/VrModNameMatcherTests.cs:572`, `VrModNameMatcherTests`)
 2. **Exact match** — the exact normalized-name lookup (`FindGamesByIndex`
    step 3, `VrModTagService.cs:1203-1222`): every game
    sharing the name, unless the App IDs conflict

@@ -11,7 +11,7 @@
 > versions: [external-references.md](external-references.md).
 
 A C# (.NET Framework 4.6.2, WPF) Playnite plugin that scrapes
-twelve community VR-mod sources, matches their listings to your
+thirteen community VR-mod sources, matches their listings to your
 Playnite library (Steam App ID first, fuzzy name match as fallback),
 applies `VRMod*` tags to matched games, and — for accepted
 matches — records the source link in the game's Links section.
@@ -87,7 +87,7 @@ source/                       # The plugin (Playnite.VRMods.csproj, net462, WPF)
 ├── VrModReviewMatchEntry.cs # Review dialog row model
 ├── VrModReviewDialog.xaml(.cs)    # Review dialog (filter, sort, columns, decisions)
 ├── ErrorToBrushConverter.cs # WPF converter (source health → brush)
-├── Parsers/                 # One parser per source (11 files, see below)
+├── Parsers/                 # One parser per source (12 files, see below)
 ├── Settings/VrModSettingsView.xaml(.cs)  # Settings page (Sources grid + scan settings)
 ├── Styles/PlayniteTheme.xaml# Playnite-like WPF styles
 ├── Properties/AssemblyInfo.cs   # InternalsVisibleTo(tests) only (no version here)
@@ -132,7 +132,8 @@ Parsers (in the source ranking from external-references.md; `SteamCuratorParser`
 is one file, instantiated twice — once per Steam curator): `PcvrCentralParser`,
 `UeVrProfilesParser`, `RototRobotVrModParser`, `MrNlceHubParser`,
 `CompoundVrParser`, `MrSurvivorHubParser`, `SteamCuratorParser`,
-`ReFrameworkParser`, `Flat2VrParser`, `VorpXParser`, `LukeRossParser`.
+`ReFrameworkParser`, `Flat2VrParser`, `VorpXParser`, `LukeRossParser`,
+`UnflatVrParser`.
 
 ## The guide, by file
 

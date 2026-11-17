@@ -32,6 +32,7 @@ namespace Playnite.VRMods
     /// - EnableVorpX: Whether to fetch from VorpX supported-games list (default: false, opt-in)
     /// - EnableLukeRoss: Whether to fetch from Luke Ross R.E.A.L. VR (default: false, opt-in)
     /// - EnableCompoundVR: Whether to fetch from the CompoundVR flat-to-VR catalog (default: true)
+    /// - EnableUnflatVR: Whether to fetch from the UnflatVR mod directory (default: true)
     /// - EnableSteamCuratorUEVR: Whether to fetch the Steam Curator "UEVR Compatibility" list (default: true)
     /// - EnableSteamCuratorVorpX: Whether to fetch the Steam Curator "VorpX Games" list (default: true)
     /// - CacheDurationMinutes: How long to cache fetched entries (default: 10)
@@ -269,6 +270,21 @@ namespace Playnite.VRMods
             set => SetValue(ref _enableCompoundVR, value);
         }
 
+        /// <summary>
+        /// Whether to fetch VR mod data from the UnflatVR mod directory.
+        /// Default: true (enabled).
+        /// Catalog-level coverage over unflatvr.com's per-mod directory (see
+        /// <see cref="UnflatVrParser"/>): it contributes the umbrella "VRMod" tag, plus a
+        /// "VRMod Quest" / "VRMod SteamFrame" tag for games whose VR comes as a standalone
+        /// headset port. UnflatVR is a catalog, so it adds no framework tag of its own. Matched
+        /// by Steam App ID where the site resolves one, and by name for the rest.
+        /// </summary>
+        private bool _enableUnflatVR = true;
+        public bool EnableUnflatVR
+        {
+            get => _enableUnflatVR;
+            set => SetValue(ref _enableUnflatVR, value);
+        }
         /// <summary>
         /// Whether to fetch VR mod data from the Steam Curator "UEVR Compatibility" list.
         /// Default: true (enabled).
@@ -1458,6 +1474,7 @@ namespace Playnite.VRMods
             Settings.EnableVorpX = snapshot.EnableVorpX;
             Settings.EnableLukeRoss = snapshot.EnableLukeRoss;
             Settings.EnableCompoundVR = snapshot.EnableCompoundVR;
+            Settings.EnableUnflatVR = snapshot.EnableUnflatVR;
             Settings.EnableSteamCuratorUEVR = snapshot.EnableSteamCuratorUEVR;
             Settings.EnableSteamCuratorVorpX = snapshot.EnableSteamCuratorVorpX;
             Settings.DisabledLinkSources = new List<string>(snapshot.DisabledLinkSources);
@@ -1553,6 +1570,7 @@ namespace Playnite.VRMods
                     "vorpx" => Settings.EnableVorpX,
                     "lukeross" => Settings.EnableLukeRoss,
                     "compoundvr" => Settings.EnableCompoundVR,
+                    "unflatvr" => Settings.EnableUnflatVR,
                     "steamcuratoruevr" => Settings.EnableSteamCuratorUEVR,
                     "steamcuratorvorpx" => Settings.EnableSteamCuratorVorpX,
                     _ => source.IsEnabled

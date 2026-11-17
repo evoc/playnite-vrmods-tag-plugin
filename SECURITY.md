@@ -2,7 +2,7 @@
 
 ## What this plugin does with untrusted input
 
-The VRMod Tags plugin reads twelve third-party websites on a schedule
+The VRMod Tags plugin reads thirteen third-party websites on a schedule
 (`BaseVrModParser.FetchStringAsync` is the only HTTP entry point) and turns what
 it reads into Playnite library data: tags, game Links, and matching decisions.
 That input is not trusted, and the threat model the code is written against:

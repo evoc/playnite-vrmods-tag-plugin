@@ -573,6 +573,47 @@ namespace PlayniteVRMods.Tests.Parsers
         }
 
         [Test]
+        public void MergeDuplicateGames_ListingUrls_AreUnionedWithoutACap()
+        {
+            // The listing set is data for a later fetch stage, not Links, so the merge must keep all
+            // of it (case-insensitively de-duplicated, first-seen order). This is the one place a
+            // field that no UI reads can be dropped quietly: the merge rebuilds the entry member by
+            // member, so a field nobody remembered is a silent loss on the next duplicate listing.
+            var entries = new List<VrModEntry>
+            {
+                new VrModEntry
+                {
+                    GameName = "Skyrim",
+                    ListingUrls = new List<string>
+                    {
+                        "https://example.com/mod-a",
+                        "https://example.com/mod-b"
+                    }
+                },
+                new VrModEntry
+                {
+                    GameName = "Skyrim",
+                    ListingUrls = new List<string>
+                    {
+                        "https://example.com/MOD-B",
+                        "https://example.com/mod-c"
+                    }
+                }
+            };
+
+            var result = BaseVrModParser.MergeDuplicateGames(entries);
+
+            Assert.That(result, Has.Count.EqualTo(1));
+            Assert.That(result[0].ListingUrls,
+                Is.EqualTo(new[]
+                {
+                    "https://example.com/mod-a",
+                    "https://example.com/mod-b",
+                    "https://example.com/mod-c"
+                }));
+        }
+
+        [Test]
         public void MergeDuplicateGames_Statuses_AreUnioned()
         {
             // Same rule as categories/qualities/motions: two listings of one game in different states
