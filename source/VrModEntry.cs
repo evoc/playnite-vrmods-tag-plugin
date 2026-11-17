@@ -334,20 +334,7 @@ namespace Playnite.VRMods
         /// </summary>
         private static System.Collections.Generic.List<string> SafeSourceUrls(
             System.Collections.Generic.IEnumerable<string>? urls)
-        {
-            var safe = new System.Collections.Generic.List<string>();
-            if (urls == null)
-                return safe;
-            foreach (var url in urls)
-            {
-                if (!WebUrl.IsSafeLinkUrl(url))
-                    continue;
-                if (safe.Find(existing => string.Equals(existing, url, StringComparison.OrdinalIgnoreCase)) != null)
-                    continue;
-                safe.Add(url!);
-            }
-            return safe;
-        }
+            => WebUrl.SafeLinkUrls(urls);
 
         /// <summary>
         /// Legacy single deep-link alias (one URL per entry). Setting it replaces
@@ -368,6 +355,28 @@ namespace Playnite.VRMods
                     SourceUrls = new System.Collections.Generic.List<string> { value! };
             }
         }
+
+        /// <summary>
+        /// Every listing URL this source publishes for the entry, in the order the source writes
+        /// them - including the ones too numerous to promote to library Links, since a source caps
+        /// <see cref="SourceUrls"/> (see e.g. <c>UnflatVrParser.MaxDeepLinksPerEntry</c>).
+        ///
+        /// Nothing writes these into the library, and they are deliberately NOT part of
+        /// <see cref="DecisionKeyComponent"/> the way <see cref="SourceUrls"/> is: they exist so a
+        /// later fetch stage can address each of a game's listing pages instead of guessing which
+        /// few survived the cap, and folding them into the key would re-key every accepted decision
+        /// the day a source added a page it never linked to.
+        ///
+        /// The same safety filter as <see cref="SourceUrls"/> runs on assignment, so an unsafe
+        /// scraped value never sits on an entry waiting for a future caller to trust it.
+        /// Empty for sources that publish no per-entry page.
+        /// </summary>
+        public System.Collections.Generic.List<string> ListingUrls
+        {
+            get => _listingUrls;
+            set => _listingUrls = SafeSourceUrls(value);
+        }
+        private System.Collections.Generic.List<string> _listingUrls = new();
 
         /// <summary>
         /// Name of the mod author/creator, if available from the source.

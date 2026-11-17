@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 
 namespace Playnite.VRMods
@@ -24,6 +25,45 @@ namespace Playnite.VRMods
         /// lines and dialog columns).
         /// </summary>
         public const int MaxUrlLength = 2048;
+
+        /// <summary>
+        /// Filters and case-insensitively de-duplicates a batch of scraped URLs, keeping
+        /// first-seen order. Equivalent to appending them to an empty list with
+        /// <see cref="AppendSafeLinkUrls"/>.
+        /// </summary>
+        /// <param name="urls">The scraped URLs, in source order. Null means none.</param>
+        /// <returns>A new list of the safe, distinct URLs.</returns>
+        public static List<string> SafeLinkUrls(IEnumerable<string>? urls)
+        {
+            var safe = new List<string>();
+            AppendSafeLinkUrls(safe, urls);
+            return safe;
+        }
+
+        /// <summary>
+        /// Appends every URL from <paramref name="incoming"/> that passes
+        /// <see cref="IsSafeLinkUrl"/> and that <paramref name="target"/> does not already hold
+        /// (case-insensitive), in arrival order. The target is read into a set once, so merging
+        /// N incoming URLs into a target already holding M costs O(N + M) rather than the O(N x M)
+        /// of rescanning the target for every candidate - which a source that publishes many
+        /// pages per game pays on every duplicate-game merge.
+        /// </summary>
+        /// <param name="target">The list to append to; kept in order and free of duplicates.</param>
+        /// <param name="incoming">The candidate URLs. Null means none.</param>
+        public static void AppendSafeLinkUrls(List<string> target, IEnumerable<string>? incoming)
+        {
+            if (incoming == null)
+                return;
+            var seen = new HashSet<string>(target, StringComparer.OrdinalIgnoreCase);
+            foreach (var url in incoming)
+            {
+                if (!IsSafeLinkUrl(url))
+                    continue;
+                if (!seen.Add(url!))
+                    continue;
+                target.Add(url!);
+            }
+        }
 
         /// <summary>
         /// Returns true when <paramref name="url"/> is an absolute http or https URL that is safe

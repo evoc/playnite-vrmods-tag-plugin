@@ -12,13 +12,14 @@ until you accept it. Accepted games get a
 - **Tags and links for what you accept** — `VRMod` plus category-specific tags (UEVR,
   Depth3D, REFramework, and the source's own framework and status
   vocabulary), and a `Link` to the listing the match came from.
-- **Twelve community sources** — ten enabled by default: PCVR Central,
+- **Thirteen community sources** — eleven enabled by default: PCVR Central,
   UeVR Profiles, RototRobot VRMods-List, PCVR Mods Installer Hub,
-  CompoundVR, Mr Survivor VR HUB, Steam Curator "UEVR Compatibility",
-  Steam Curator "VorpX Games", REFramework, Flat2VR Studios. Two are
-  opt-in and stay out of every scan until you enable them: VorpX, and
-  Luke Ross (R.E.A.L. VR). Each source is individually toggleable,
-  and the settings page shows each one's health and last result.
+  CompoundVR, Mr Survivor VR HUB, UnflatVR, Steam Curator "UEVR
+  Compatibility", Steam Curator "VorpX Games", REFramework, Flat2VR
+  Studios. Two are opt-in and stay out of every scan until you enable
+  them: VorpX, and Luke Ross (R.E.A.L. VR). Each source is individually
+  toggleable, and the settings page shows each one's health and last
+  result.
 - **Matched by Steam App ID as well as by name** — when a listing and a library
   game publish the same Steam product id they pair even if their names share
   nothing; when they publish different ids, a pairing the names would have made
@@ -132,7 +133,7 @@ it again. To try a build without packaging, copy the published files to
 
 ## Security posture
 
-Everything this plugin reads from the twelve sources is untrusted input
+Everything this plugin reads from the thirteen sources is untrusted input
 that becomes library data, so [SECURITY.md](SECURITY.md) is written
 as a threat model rather than a vulnerability-report policy. In short:
 one HTTP entry point (`BaseVrModParser.FetchStringAsync`); `Links`
@@ -170,7 +171,7 @@ Matcher][matcher] (SW-Fan1138), and VRMod Tags (this plugin).
 - VR Mod Tagger — Four: PCVR Central, PCVR Gamer,
   MrSurvivor Installers, PCVR Mods Installer Hub
 - PCVR Central Matcher — One: PCVR Central
-- VRMod Tags — Twelve, individually toggleable
+- VRMod Tags — Thirteen, individually toggleable
 
 #### Built-in VR as its own fact
 
@@ -206,7 +207,7 @@ Matcher][matcher] (SW-Fan1138), and VRMod Tags (this plugin).
 - PCVR Central Matcher — v1.0.0 (22 Oct 2026), MIT
 - VRMod Tags — This repository's **Releases** page, MIT
 
-Nine of this plugin's twelve sources appear in neither of the other two; **PCVR
+Ten of this plugin's thirteen sources appear in neither of the other two; **PCVR
 Gamer** is the only source they read that this plugin does not.
 
 Two things worth knowing before you install a second one:
@@ -245,7 +246,7 @@ or writes a tag. They are what you use after a tag has told you a mod exists.
 - [**PCVR Mods Installer Hub**](https://github.com/Mr-Nlce/PCVR-Mods-Installer-Hub)
   (Mr. Nlce, MIT) — a portable batch installer and
   launcher with Steam detection. It tags nothing, but
-  its mod list is one of this plugin's twelve sources.
+  its mod list is one of this plugin's thirteen sources.
 - [**Unreal Easy Injector**](https://uevrdeluxe.org)
   ([oduis/UEVRDeluxe](https://github.com/oduis/UEVRDeluxe)) — a friendlier front
   end for UEVR with an online database of profiles and supported games.
@@ -277,6 +278,6 @@ Dependabot is configured for the NuGet requirements and the workflow pins.
 
 ## License
 
-[MIT](LICENSE). The twelve community sources this plugin is built on are named
+[MIT](LICENSE). The thirteen community sources this plugin is built on are named
 and linked in [docs/tags.md](docs/tags.md) and
 [external-references.md](external-references.md).

@@ -54,6 +54,14 @@ namespace Playnite.VRMods
         public const string MrNlceHub = "PCVR Mods Hub";
         public const string MrSurvivorHub = "Mr Survivor";
         public const string CompoundVr = "CompoundVR";
+        public const string UnflatVr = "UnflatVR";
+
+        // Headset categories (the VR runs on a standalone headset rather than on the PC that holds
+        // the game). UnflatVR is the only source that reports these today: its tag says the game can
+        // be played in VR that way, which is a different claim from "the PC copy gained a PCVR mod" -
+        // so it carries no framework tag and never replaces one.
+        public const string Quest = "Quest";
+        public const string SteamFrame = "SteamFrame";
 
         // Input-type categories (how the player interacts).
         public const string FullMotionControls = "Full Motion Controls";
@@ -161,7 +169,8 @@ namespace Playnite.VRMods
             new System.Collections.Generic.HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
             {
                 UeVr, ReFramework, Flat2Vr, Dedicated, VorpX, LukeRoss, UuVr, Depth3D, Other,
-                PcvrCentral, MrNlceHub, MrSurvivorHub, CompoundVr,
+                PcvrCentral, MrNlceHub, MrSurvivorHub, CompoundVr, UnflatVr,
+                Quest, SteamFrame,
                 FullMotionControls, MotionGesture, HeadTracked,
                 MotionFull, MotionPartial, MotionGamepadOnly, MotionNone,
                 QualityNativeLike, QualityExcellent, QualityPlayable, QualityExperimental,
@@ -257,7 +266,7 @@ namespace Playnite.VRMods
         public static bool IsCatalogCategory(string category)
         {
             return category == PcvrCentral || category == MrNlceHub || category == MrSurvivorHub
-                || category == CompoundVr;
+                || category == CompoundVr || category == UnflatVr;
         }
 
         /// <summary>

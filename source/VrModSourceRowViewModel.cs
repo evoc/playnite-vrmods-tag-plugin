@@ -88,6 +88,7 @@ namespace Playnite.VRMods
                     "vorpx" => _settings.EnableVorpX,
                     "lukeross" => _settings.EnableLukeRoss,
                     "compoundvr" => _settings.EnableCompoundVR,
+                    "unflatvr" => _settings.EnableUnflatVR,
                     "steamcuratoruevr" => _settings.EnableSteamCuratorUEVR,
                     "steamcuratorvorpx" => _settings.EnableSteamCuratorVorpX,
                     _ => _source.IsEnabled
@@ -127,6 +128,9 @@ namespace Playnite.VRMods
                         break;
                     case "compoundvr":
                         _settings.EnableCompoundVR = value;
+                        break;
+                    case "unflatvr":
+                        _settings.EnableUnflatVR = value;
                         break;
                     case "steamcuratoruevr":
                         _settings.EnableSteamCuratorUEVR = value;

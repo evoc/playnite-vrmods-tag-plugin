@@ -122,6 +122,7 @@ namespace Playnite.VRMods
             _registry.Register(new PcvrCentralParser());
             _registry.Register(new UeVrProfilesParser());
             _registry.Register(new RototRobotVrModParser());
+            _registry.Register(new UnflatVrParser());
             _registry.Register(new MrNlceHubParser());
             _registry.Register(new CompoundVrParser());
             _registry.Register(new MrSurvivorHubParser());

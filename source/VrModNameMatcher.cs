@@ -608,9 +608,9 @@ namespace Playnite.VRMods
         // wording sitting at the very end of the name comes off, and only when that run contains a word
         // that can only mean a re-release.
         //
-        // MEASURED, four modes of one build over the same corpus - 2 520 real library names against 695
-        // real catalog headings (PlayniteVRmods-dev/tools/NormAb; NORMAB_NOSTRIP=1, default,
-        // NORMAB_WORDSTRIP=1, NORMAB_BOTH=1):
+        // MEASURED, four modes of one build of an out-of-repo A/B harness over the
+        // same corpus - 2 520 real library names against 695 real catalog headings
+        // (the four modes: NORMAB_NOSTRIP=1, default, NORMAB_WORDSTRIP=1, NORMAB_BOTH=1):
         //   the rule off                                     135 pairs
         //   THIS rule: tail peeled on the library side as an extra key   144  (+9, nothing lost)
         //   word-level strip, words taken out wherever they sit          142  (+7, and 4 of these 9 lost)
@@ -657,7 +657,7 @@ namespace Playnite.VRMods
         /// names (`VrModTagService.BuildGameIndex`, `:628`) - and not on the listing side, for two
         /// measured reasons. (1) The wording lives in libraries: 163 of 2 520 real library names contain
         /// one of these words somewhere and 150 of them end with a peelable tail, against 6 of 695 real
-        /// catalog headings, 5 of them a tail (PlayniteVRmods-dev/tools/NormAb). (2)
+        /// catalog headings, 5 of them a tail (the out-of-repo A/B harness). (2)
         /// Taking it off the listing side costs matches: the listing "DOOM 3 BFG Edition" against the
         /// library's misspelled "DOOM 3 BFG Editon" is one edit apart (similarity 0.944), but once the
         /// listing loses "Edition" it is 0.588 - and it cannot fall back on the substring rule either,

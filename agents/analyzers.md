@@ -7,7 +7,7 @@
 Analyzers: `source/Playnite.VRMods.csproj` sets `EnableNETAnalyzers`
 with `AnalysisLevel=latest` + `AnalysisMode=All`. On `net462` the SDK
 leaves analyzers **off** by default (it enables them for `net5+`), so
-this has to be set explicitly: the plugin parses twelve attacker-chosen
+this has to be set explicitly: the plugin parses thirteen attacker-chosen
 websites and the framework's own security rules have to actually run
 on it. `AnalysisMode=Security` is not the posture — it switches off
 the style/performance and design families, and those families have

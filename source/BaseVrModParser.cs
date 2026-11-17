@@ -1064,6 +1064,7 @@ namespace Playnite.VRMods
                         SteamAppId = entry.SteamAppId,
                         Author = entry.Author,
                         SourceUrls = new List<string>(entry.SourceUrls),
+                        ListingUrls = new List<string>(entry.ListingUrls),
                         SourceId = entry.SourceId,
                         AdditionalInfo = entry.AdditionalInfo
                     };
@@ -1078,7 +1079,8 @@ namespace Playnite.VRMods
         /// Folds one occurrence's features into a merged entry (see <see cref="MergeDuplicateGames"/>):
         /// unions the category/quality/motion/status lists and the per-game deep links (case-insensitive,
         /// first-seen order — a merged game keeps every distinct deep link, each contributing its
-        /// own Playnite link), ORs the facet flags (true wins; the parsers never emit false), and
+        /// own Playnite link), unions the source's full listing URLs the same way (uncapped, since no
+        /// Link is written from them), ORs the facet flags (true wins; the parsers never emit false), and
         /// fills optional fields (SteamAppId / Author / SourceId / AdditionalInfo) only when still unset.
         /// </summary>
         private static void MergeFeaturesInto(VrModEntry target, VrModEntry source)
@@ -1098,16 +1100,12 @@ namespace Playnite.VRMods
             if (source.Is6DOF == true) target.Is6DOF = true;
             if (source.IsFirstPerson == true) target.IsFirstPerson = true;
             if (source.IsThirdPerson == true) target.IsThirdPerson = true;
-            foreach (var url in source.SourceUrls)
-            {
-                // SourceUrls is normally already validated by VrModEntry's setter; the merge writes
-                // straight into the target list, so re-check here rather than trusting the source.
-                if (!WebUrl.IsSafeLinkUrl(url))
-                    continue;
-                if (target.SourceUrls.Find(u => string.Equals(u, url, StringComparison.OrdinalIgnoreCase)) != null)
-                    continue;
-                target.SourceUrls.Add(url);
-            }
+            // SourceUrls is normally already validated by VrModEntry's setter; the merge writes
+            // straight into the target list, so the merge re-checks rather than trusting the source.
+            WebUrl.AppendSafeLinkUrls(target.SourceUrls, source.SourceUrls);
+            // Listing URLs are kept as a set for a later fetch stage, not as Links, so the deep-link
+            // cap does not apply here: dropping a page this source published would be a silent loss.
+            WebUrl.AppendSafeLinkUrls(target.ListingUrls, source.ListingUrls);
             if (target.SteamAppId == null) target.SteamAppId = source.SteamAppId;
             if (target.Author == null) target.Author = source.Author;
             if (target.SourceId == null) target.SourceId = source.SourceId;
