@@ -120,6 +120,22 @@ with no Steam link, match by name exactly as they always did.
   your library (tags and links are applied), **Cancel** closes the dialog
   and discards the unsaved changes. **Save** is disabled while everything
   is already saved. The **×** in the title bar also closes without saving.
+- One game can appear as **two rows** when two sources list something for it —
+  PCVR Central and CompoundVR, or UnflatVR and CompoundVR both reporting a Quest
+  build. That is intended: a decision belongs to one source's listing paired with
+  one game, so each row keeps its own source and its own link to the mod page.
+  The tags do not multiply. Accepting both rows adds `VRMod Quest` once, and it
+  stays until no source backs it any more.
+- A source can also stop listing something. CompoundVR no longer offers a card it
+  classifies as a natively-VR product — a game that shipped in VR, rather than one
+  the modding scene made reachable in VR (measured on 2026-11-18: 213 of its 565
+  cards). Its row is gone, so there is nothing to review. When another source still
+  lists the game, its rows and tags are untouched: that is the union above working
+  as intended, and it is why one source going quiet is not a loss. When nothing
+  else lists it, the plugin's own tags come off, its source link goes, and the
+  decision you made about that pairing is cleared with them — so if a mod for that
+  game ever appears, you are asked again rather than having it applied on an old
+  yes.
 - The library menu offers the same decisions one game at a time: a game's
   right-click menu → **VRMod Tags** → **Reset my decisions for this
   game...** or **Reject all assigned VR mods on this game...**. What each

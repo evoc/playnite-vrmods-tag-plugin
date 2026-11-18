@@ -1250,6 +1250,177 @@ namespace PlayniteVRMods.Tests.Unit
         }
 
         [Test]
+        public void RunFullScanAsync_TwoSourcesAgreeOnAHeadsetTag_AddTheTagOnce()
+        {
+            var skyrim = new Game("Skyrim") { TagIds = new List<System.Guid>() };
+            _games.Items.Add(skyrim);
+
+            // The cross-source case this change introduced: two sources report a Quest build for the
+            // same game. Two review rows is intended — a decision belongs to a (source, game) pair —
+            // but the applied set is a union over every source's entry before it is reconciled, so
+            // the tag itself appears once. This is what makes the second source cost nothing in the
+            // library, which is the half of the owner's ruling a per-source decision cannot prove.
+            var parser1 = new TestParser(new[]
+            {
+                new VrModEntry { GameName = "Skyrim", Category = VrModCategories.Quest, SteamAppId = "72850" }
+            });
+            var parser2 = new TestParser(new[]
+            {
+                new VrModEntry { GameName = "Skyrim", Category = VrModCategories.Quest, SteamAppId = "72850" }
+            });
+            _registry.Register(parser1);
+            _registry.Register(parser2);
+
+            _settings.AcceptListingsFrom(parser1, skyrim.Id);
+            _settings.AcceptListingsFrom(parser2, skyrim.Id);
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            Assert.That(_tags.Items.Count(t => t.Name == "VRMod Quest"), Is.EqualTo(1));
+            Assert.That(_games.Items[0].TagIds, Has.Count.EqualTo(2));
+        }
+
+        // The other half of the owner's ruling, at the level where it is actually decided. The route
+        // gate lives inside one parser; what it does to a library is decided here, where a scan ends
+        // by removing plugin-owned tags matched by nothing any more, over the union of every source's
+        // entries. These three are the reason the gate is allowed to exist at all, and the answer to
+        // the constraint the owner put on this change (do not lose actual VR mods by accident): a
+        // source going quiet about a game moves nothing while another source still justifies it;
+        // where nothing else does, only that source's own contribution leaves, and the stored decision
+        // stays for the day the card comes back.
+        //
+        // All three set CacheDurationMinutes to 0. The service keeps each source's entry list in
+        // memory for ten minutes by default and hands the next scan that copy, so a test that changes
+        // what a source publishes would otherwise re-read the previous scan and conclude, wrongly and
+        // quietly, that removal works (or that it does not). Precedent: IntegrationTests' two-scan
+        // cache test does the same, for the same reason.
+        [Test]
+        public void RunFullScanAsync_OneSourceStopsListingAGame_OtherSourceKeepsEveryTag()
+        {
+            _settings.CacheDurationMinutes = 0;
+            var skyrim = new Game("Skyrim") { TagIds = new List<System.Guid>() };
+            _games.Items.Add(skyrim);
+
+            // A mutable list is the point. Clearing it between scans is exactly what a gated card
+            // looks like from here: the source answers, and its answer no longer contains the game.
+            // The entries are held in locals because a decision is keyed by the listing, so that is
+            // also the only correct key to read it back with.
+            var gatedListing = new VrModEntry
+            {
+                GameName = "Skyrim",
+                Category = VrModCategories.Quest,
+                SteamAppId = "72850"
+            };
+            var otherListing = new VrModEntry
+            {
+                GameName = "Skyrim",
+                Category = VrModCategories.Quest,
+                SteamAppId = "72850"
+            };
+            var gatedEntries = new List<VrModEntry> { gatedListing };
+            var gatedSource = new TestParser(gatedEntries);
+            var otherSource = new TestParser(new[] { otherListing });
+            _registry.Register(gatedSource);
+            _registry.Register(otherSource);
+
+            _settings.AcceptListingsFrom(gatedSource, skyrim.Id);
+            _settings.AcceptListingsFrom(otherSource, skyrim.Id);
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+            var afterFirstScan = new List<System.Guid>(skyrim.TagIds);
+            Assert.That(afterFirstScan, Has.Count.EqualTo(2));
+
+            gatedEntries.Clear();
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            Assert.That(skyrim.TagIds, Is.EquivalentTo(afterFirstScan));
+            Assert.That(_settings.GetDecisionForListing(gatedListing, gatedSource.SourceId, skyrim.Id),
+                        Is.EqualTo(MatchDecision.Accepted));
+            Assert.That(_settings.GetDecisionForListing(otherListing, otherSource.SourceId, skyrim.Id),
+                        Is.EqualTo(MatchDecision.Accepted));
+        }
+
+        [Test]
+        public void RunFullScanAsync_OnlySourceStopsListingAGame_OnlyItsOwnContributionLeaves()
+        {
+            _settings.CacheDurationMinutes = 0;
+            var skyrim = new Game("Skyrim") { TagIds = new List<System.Guid>() };
+            var action = _tags.Add("Action");
+            skyrim.TagIds.Add(action.Id);
+            _games.Items.Add(skyrim);
+
+            var listing = new VrModEntry
+            {
+                GameName = "Skyrim",
+                Category = VrModCategories.Quest,
+                SteamAppId = "72850"
+            };
+            var entries = new List<VrModEntry> { listing };
+            var source = new TestParser(entries);
+            _registry.Register(source);
+            _settings.AcceptListingsFrom(source, skyrim.Id);
+
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+            Assert.That(skyrim.TagIds, Has.Count.EqualTo(3));
+
+            entries.Clear();
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+
+            // Exactly this source's contribution: the umbrella tag and the headset tag it proposed.
+            // A tag the plugin does not own is not this source's to remove, so "Action" stays.
+            Assert.That(skyrim.TagIds, Is.EquivalentTo(new[] { action.Id }));
+            // And the game's stored decisions go with it. RemoveStaleTags clears the decisions of any
+            // game that dropped out of every match, so the expectation raised when this gate was
+            // drafted — that the accepted decision
+            // "stays in the store pointing at nothing" — is wrong, and this is the test that says so.
+            // The pairing comes back as a question, not as a tag. The next test pins what that costs.
+            Assert.That(_settings.GetDecisionForListing(listing, source.SourceId, skyrim.Id),
+                        Is.EqualTo(MatchDecision.Pending));
+        }
+
+        [Test]
+        public void RunFullScanAsync_GatedCardReturns_ThePairingIsAQuestionAgainNotATag()
+        {
+            _settings.CacheDurationMinutes = 0;
+            var skyrim = new Game("Skyrim") { TagIds = new List<System.Guid>() };
+            _games.Items.Add(skyrim);
+
+            var listing = new VrModEntry
+            {
+                GameName = "Skyrim",
+                Category = VrModCategories.Quest,
+                SteamAppId = "72850"
+            };
+            var entries = new List<VrModEntry> { listing };
+            var source = new TestParser(entries);
+            _registry.Register(source);
+            _settings.AcceptListingsFrom(source, skyrim.Id);
+
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+            Assert.That(skyrim.TagIds, Has.Count.EqualTo(2));
+
+            entries.Clear();
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+            Assert.That(skyrim.TagIds, Is.Not.Null.And.Empty);
+            Assert.That(_settings.GetDecisionForListing(listing, source.SourceId, skyrim.Id),
+                        Is.EqualTo(MatchDecision.Pending));
+
+            // The card is back on the site. It does NOT re-tag the game: the decision went with the
+            // tags, so the pairing arrives unreviewed again and the user is asked once more. That is
+            // the true cost of gating a game no other source covers — an accepted pairing has to be
+            // made again — and it is smaller than the alternative weighed then, which was to keep a
+            // decision that no source would justify.
+            entries.Add(listing);
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+            Assert.That(skyrim.TagIds, Is.Not.Null.And.Empty);
+            Assert.That(_settings.GetDecisionForListing(listing, source.SourceId, skyrim.Id),
+                        Is.EqualTo(MatchDecision.Pending));
+
+            // Making that decision again is all it takes: recovery works, it is just not automatic.
+            _settings.AcceptListingsFrom(source, skyrim.Id);
+            _service.RunFullScanAsync().GetAwaiter().GetResult();
+            Assert.That(skyrim.TagIds, Has.Count.EqualTo(2));
+        }
+
+        [Test]
         public void RunFullScanAsync_NoSourcesEnabled_DoesNothing()
         {
             var skyrim = new Game("Skyrim") { TagIds = new List<System.Guid>() };

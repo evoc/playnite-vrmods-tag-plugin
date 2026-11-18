@@ -17,9 +17,10 @@
 | `VRMod UUVR` | PCVR Central (each mod's `framework`) | UUVR, the Unity-engine injector. It is its own tag rather than `VRMod UEVR` because UEVR is the Unreal-engine tool — tagging a Unity game `UEVR` names the wrong tool and the wrong engine. |
 | `VRMod Depth3D` | PCVR Central (each mod's `framework`) | A ReShade depth-shader 3D effect. The site itself calls this "not a real VR conversion", so it is its own tag rather than being mixed in with the real VR injectors. |
 | `VRMod Other` | PCVR Central (each mod's `framework`) | The site's catch-all for a mod whose method fits none of its framework categories. |
-| `VRMod Quest` | UnflatVR | The game's VR comes as a port that runs on a standalone Meta Quest headset. It sits next to the umbrella tag rather than instead of it: the game is playable in VR, but not from the PC that holds this library entry. |
-| `VRMod SteamFrame` | UnflatVR | The same claim for a standalone Steam Frame headset. |
-| — (catalog source: no tag of its own) | PCVR Central, PCVR Mods Hub, Mr Survivor, CompoundVR, UnflatVR | These five are catalog categories (`VrModCategories.IsCatalogCategory`): the source name never becomes a tag — the source link on the game carries the provenance. PCVR Central still contributes the framework categories and the quality/motion/status facets below; UnflatVR still contributes the two headset tags above, which describe a headset rather than a framework. |
+| `VRMod Quest` | UnflatVR (per mod), CompoundVR (per game) | The game's VR comes as a port that runs on a standalone Meta Quest headset. It sits next to the umbrella tag rather than instead of it: the game is playable in VR, but not from the PC that holds this library entry. The two sources publish different things, so the claim differs: from UnflatVR, which labels every mod's platform, a Quest build of *that mod* exists; from CompoundVR, which labels platforms per game and never per mod, the site covers *this game* for Quest. *Which sources mint which* below says what that costs on CompoundVR, where a card its own fields call developer-made VR is not offered by that source at all. |
+| `VRMod SteamFrame` | UnflatVR | The same claim for a standalone Steam Frame headset. UnflatVR is the only source that publishes this platform, so the tag is rare by construction rather than by omission — nothing in the other twelve sources says a thing about the Frame. |
+| — (no tag: PCVR, and the displays that run it) | CompoundVR also publishes `PCVR`, `PSVR`, `PSVR2`, `Pico`, `Rift`, `Rift S`, `Vive`, `Index`, `Windows Mixed Reality` | All nine deliberately unmapped, each for a reason stated in the table under *Out of scope by decision, not by omission* below. In short: PCVR is this plugin's default and is never subdivided, the tethered displays sit inside that same bucket on retired hardware, and the console and Pico-store listings are not mods this plugin could install or launch. The headset tags mark a standalone device — the one case where the mod is a different artifact from the PC build. |
+| — (catalog source: no tag of its own) | PCVR Central, PCVR Mods Hub, Mr Survivor, CompoundVR, UnflatVR | These five are catalog categories (`VrModCategories.IsCatalogCategory`): the source name never becomes a tag — the source link on the game carries the provenance. PCVR Central still contributes the framework categories and the quality/motion/status facets below; UnflatVR and CompoundVR still contribute the headset tags above, which describe a headset rather than a framework. |
 | `VRMod 6DOF` | REFramework (facet) | The mod supports 6DOF tracking. |
 | `VRMod First Person` | (facet) | The mod is a first-person experience. |
 | `VRMod Third Person` | (facet) | The mod is a third-person experience. |
@@ -51,6 +52,55 @@ than one category tag (for example a RototRobot mod that is both
 full-motion *and* a UEVR profile yields `VRMod Full Motion` *and*
 `VRMod UEVR`). A game's tag set is the union of every tag yielded by
 every matched mod, so a game can carry several category tags at once.
+
+### Which sources mint which - and what deliberately earns nothing
+
+Thirteen sources contribute tags, and they do not contribute the same kind of
+claim. A catalog category source names a *framework or a method*
+(`UEVR`, `UUVR`, `Depth3D`); a catalog source may also name a *quality*, a
+*motion level* or a *mod status*; and only two sources say anything about
+which **device** the VR runs on.
+
+**Headset tags - `Quest` and `SteamFrame` - come from exactly two of the
+documented thirteen.** UnflatVR labels every mod with its platforms
+(`data-platf`, comma-separated, and its own platform names are not a closed
+set), so from UnflatVR the claim is "a build of *this mod* runs on that
+standalone headset". CompoundVR labels every *game* (`data-platforms`, a
+small closed vocabulary) and never a mod, so from CompoundVR the claim is
+"this site covers the game for that headset". Those are the only two sources
+that publish a device at all - and the only reason `SteamFrame` is rare is
+that UnflatVR is the only one of the thirteen that names it.
+
+CompoundVR also withholds its headset tag, and the entire listing, from a
+card its own fields call developer-made VR: `data-route` reading `Native VR`
+or `Official Hybrid`, with no mod tool named in `data-tech`. That is not
+merely a tag withheld — the card stops being offered by that source, so it
+brings no row into the review dialog, no umbrella tag and no source link, on
+the grounds that a game whose VR the developer shipped is not something a
+flat-to-VR source can offer. Measured on 2026-11-18: 213 of the 564 cards on
+the recorded page, and 213 of 565 on the live page that day. A card naming a
+mod tool anyway passes, whatever its route says, and a game another source
+still lists keeps whatever that source justifies — the library tag is the
+union over every source, so one source going quiet is not a loss
+(see [the review dialog](review.md)).
+
+#### Out of scope by decision, not by omission
+
+The counts below come from the 562 cards recorded on 2026-11-17. The page
+moves by a card or two a day (565 on 2026-11-18), so read the ratios, not the
+denominators.
+
+| Device | Why no tag |
+| --- | --- |
+| PCVR | The default. A tag for the headset you already own tells you nothing, and the plugin does not subdivide PCVR by display. |
+| `Rift`, `Rift S`, `Vive`, `Index` | Inside that same PCVR bucket, on retired hardware. Valve made the Index line end-of-life in January 2026; Meta ended Rift S support after 2026-04-20. |
+| `Windows Mixed Reality` | Same bucket, and 1 card in those 562: Microsoft ended the platform in November 2025. |
+| `PSVR`, `PSVR2` | Where CompoundVR lists PlayStation-store console games and PSVR2-native titles - not mods, and nothing this plugin could install or launch. Measured: 0 of the 124 and 0 of the 80 cards carry a mod route. |
+| `Pico` | Where that site lists Pico-store games and PSP emulator packages. Measured: 2 of the 39 cards carry a mod route, neither on a modded PC game, and all 39 also list `Quest` - so the tag would mark console and emulator packages while naming no game the `Quest` tag does not already name. |
+
+`PSVR`, `PSVR2` and `Pico` are the three that were re-checked rather than
+inherited: the site does publish them, and they were declined on the evidence
+that they mark a store's own catalogue, not a mod.
 
 ## How a tag comes off again
 
@@ -94,7 +144,8 @@ community projects. Thanks to all the maintainers:
 - [PCVR Mods Installer Hub](https://github.com/Mr-Nlce/PCVR-Mods-Installer-Hub)
   — Mr. Nlce's installer hub catalog
 - [CompoundVR](https://compoundvr.com/) — curated
-  flat-to-VR catalog with per-game tier verdicts
+  flat-to-VR catalog with per-game tier verdicts, the route by which each game
+  gained VR, and the platforms it is reachable on
 - [Mr Survivor VR HUB](https://mrsurvivor-installers.com/)
   — Mr Survivor's installer hub catalog
 - [Steam Curator “UEVR Compatibility”](https://store.steampowered.com/curator/44946997-UEVR-Compatibility/)
