@@ -605,6 +605,7 @@ namespace PlayniteVRMods.Tests.Unit
             public string DisplayName { get; }
             public string WebsiteUrl => "https://example.com/";
             public bool IsEnabled { get; set; }
+            public IReadOnlyList<RetiredLinkRule> RetiredLinks => Array.Empty<RetiredLinkRule>();
             public string? ChangeIdentifier => null;
             public List<string>? RunLog { get; set; }
             public System.Threading.CancellationToken ScanToken { get; set; }

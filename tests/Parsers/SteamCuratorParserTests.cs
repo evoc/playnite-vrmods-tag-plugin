@@ -152,6 +152,31 @@ namespace PlayniteVRMods.Tests.Parsers
         }
 
         /// <summary>
+        /// A curator listing carries no page of its own. The only page this source has for a game
+        /// is that game's Steam store page — a page about the game, saying nothing about the mod —
+        /// so the entry must not carry it, and the link the plugin writes for such a listing is the
+        /// curator page (the source's general page). The App ID still travels on every entry: it is
+        /// what matches the listing to a game, and what the user's stored confirmation is keyed on,
+        /// so dropping the store URL costs neither.
+        /// </summary>
+        [Test]
+        public async Task FetchEntries_EntriesCarryNoPageOfTheirOwn_ButKeepTheAppId()
+        {
+            var parser = new PagedTestCuratorParser();
+            var entries = (await parser.FetchEntriesAsync()).ToList();
+
+            Assert.That(entries, Has.Count.GreaterThan(0));
+            Assert.That(entries.SelectMany(e => e.SourceUrls), Is.Empty);
+            // Identity survives without a page: a listing that carries an App ID is keyed on that
+            // (VrModEntry.DecisionKeyComponent), which is why dropping the store URL costs the user
+            // no stored confirmation. (The fixture's first item is appid 0, which the entry type
+            // refuses as an id, so presence is checked on a real one rather than across all.)
+            Assert.That(
+                entries.First(e => e.SteamAppId == "50").DecisionKeyComponent,
+                Is.EqualTo("steam:50"));
+        }
+
+        /// <summary>
         /// A curator that is exactly one page (total_count &le; PageSize) must fetch a single page
         /// and stop — no over-fetch.
         /// </summary>

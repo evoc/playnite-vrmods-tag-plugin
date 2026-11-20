@@ -5,13 +5,16 @@ VR mods, ports and conversions for the games already in your library.
 It reads community-curated sources, matches their listings against
 your games, and asks you about the pairings it finds: nothing is tagged
 until you accept it. Accepted games get a
-`VRMod` tag, the source's own category tags, and a link to the mod page.
+`VRMod` tag, the source's own category tags, and a link to the page for it on
+the source that published the match — or that source's own site, when it has no
+page of its own for the game.
 
 ## Features
 
 - **Tags and links for what you accept** — `VRMod` plus category-specific tags (UEVR,
   Depth3D, REFramework, and the source's own framework and status
-  vocabulary), and a `Link` to the listing the match came from.
+  vocabulary), and a `Link` pointing at the source that published the match — its
+  page for that game, or its site when it publishes no page for the game.
 - **Thirteen community sources** — eleven enabled by default: PCVR Central,
   UeVR Profiles, RototRobot VRMods-List, PCVR Mods Installer Hub,
   CompoundVR, Mr Survivor VR HUB, UnflatVR, Steam Curator "UEVR

@@ -7,6 +7,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Windows;
 using System.Windows.Input;
 
@@ -1074,9 +1075,315 @@ namespace Playnite.VRMods
             return !Guid.TryParse(parts[2], out _);
         }
 
+        #region Source link ledger: which rows this plugin wrote
+
+        /// <summary>
+        /// Every source-link row this plugin created, per game, kept so a row stays ours after the
+        /// match that produced it is gone.
+        ///
+        /// Key: the Playnite game Id in "D" format - the same spelling the third segment of a decision
+        /// key uses. Value: this plugin's claims on that game, joined by ';', each claim
+        /// `sourceId||linkName||url` as a <see cref="SourceLinkClaim"/>.
+        ///
+        /// Keyed by game, not by decision key, on purpose. A decision key is deleted in the very sweep
+        /// that later needs the proof: <c>RemoveStaleTags</c> clears a dropped-out game's decisions and
+        /// only then reconciles its links. A ledger keyed the way decisions are would be empty at the
+        /// moment it is needed, which is the leak this map exists to close.
+        ///
+        /// Published copy-on-write under <see cref="_decisionSync"/> like the three decision maps: a
+        /// getter that handed out copies would make Newtonsoft's default ObjectCreationHandling discard
+        /// what it just loaded (see <see cref="_decisionSync"/>), and a map enumerated while a scan
+        /// writes it throws inside Playnite's settings save.
+        /// </summary>
+        private Dictionary<string, string> _addedLinksByGame = new();
+
+        /// <summary>
+        /// Which version of the source-link ledger migration has run. 0 means never.
+        ///
+        /// Guarding a one-shot migration over the whole library, not protecting against corruption:
+        /// adoption is idempotent (an existing claim is never added twice), so a missed save costs a
+        /// repeat pass, not damage. The flag exists so a healthy install does not walk 3 000 games' link
+        /// collections on every start.
+        /// </summary>
+        public int SourceLinkLedgerVersion { get; set; }
+
+        /// <summary>
+        /// The ledger as stored (persisted to JSON). The getter hands out the published instance and
+        /// initializes it on first use, which is what lets deserialization populate the live map; the
+        /// setter adopts the instance it is given. Treat both as read-only from outside.
+        /// </summary>
+        public Dictionary<string, string> AddedLinksByGame
+        {
+            get => _addedLinksByGame ??= new();
+            set => _addedLinksByGame = value ?? new();
+        }
+
+        private Dictionary<string, string> Ledger() => _addedLinksByGame ??= new();
+
+        /// <summary>
+        /// Counts ledger publications since the last time someone asked. The ledger is written by scans
+        /// and by the startup adoption, and neither is a settings edit: Playnite does not rewrite this
+        /// plugin's config.json on exit, so a scan that changed the ledger and was never followed by a
+        /// save would lose the change - and the row it removed with it, since the next start would
+        /// re-adopt the claim from the stale file. Writers ask; the plugin is the only one who can write
+        /// the file, so the request goes to it.
+        /// </summary>
+        private int _pendingLedgerWrites;
+
+        private void PublishLedger(Dictionary<string, string>? ledger)
+        {
+            if (ledger == null)
+                return;
+
+            _addedLinksByGame = ledger;
+            Interlocked.Increment(ref _pendingLedgerWrites);
+        }
+
+        /// <summary>True when the ledger changed since the last call, and clears the count.</summary>
+        public bool ConsumePendingLedgerWrites()
+            => Interlocked.Exchange(ref _pendingLedgerWrites, 0) > 0;
+
+        /// <summary>Total claims across the library - the number the adoption migration logs.</summary>
+        public int LinkClaimCount
+        {
+            get
+            {
+                lock (_decisionSync)
+                {
+                    var total = 0;
+                    foreach (var value in Ledger().Values)
+                        total += SourceLinkClaim.Parse(value).Length;
+                    return total;
+                }
+            }
+        }
+
+        /// <summary>Every game this plugin has written a link for, as game Ids - the sweep list.</summary>
+        public List<Guid> GetGamesWithLinkClaims()
+        {
+            lock (_decisionSync)
+            {
+                var ids = new List<Guid>(Ledger().Count);
+                foreach (var key in Ledger().Keys)
+                {
+                    if (Guid.TryParse(key, out var id))
+                        ids.Add(id);
+                }
+
+                return ids;
+            }
+        }
+
+        /// <summary>
+        /// This plugin's claims on one game, oldest first. Never null; empty when the game has none.
+        /// </summary>
+        public List<SourceLinkClaim> GetLinkClaims(Guid gameId)
+        {
+            lock (_decisionSync)
+                return Ledger().TryGetValue(gameId.ToString("D"), out var value)
+                    ? new List<SourceLinkClaim>(SourceLinkClaim.Parse(value))
+                    : new List<SourceLinkClaim>();
+        }
+
+        /// <summary>
+        /// Records that this plugin wrote <paramref name="url"/> under <paramref name="name"/> for
+        /// <paramref name="sourceId"/> on this game. Idempotent: re-recording an existing claim costs no
+        /// clone and publishes nothing, which is what keeps a steady-state scan from rewriting
+        /// config.json on every pass.
+        /// </summary>
+        /// <returns>True when the ledger changed.</returns>
+        public bool RecordLinkClaim(Guid gameId, string sourceId, string name, string url)
+        {
+            lock (_decisionSync)
+            {
+                var claims = GetLinkClaimsUnsafe(gameId);
+                var claim = new SourceLinkClaim(sourceId, name, url);
+                foreach (var existing in claims)
+                {
+                    if (existing.SameClaim(claim))
+                        return false;
+                }
+
+                claims.Add(claim);
+                return WriteClaims(gameId, claims);
+            }
+        }
+
+        /// <summary>
+        /// Drops the claim for one (source, url) - called when that row is removed, so the ledger
+        /// describes rows that actually exist. Only that source's claim goes: a second source that wants
+        /// the same URL keeps its own, and the row is correct as long as one claim survives.
+        /// </summary>
+        /// <returns>True when the ledger changed.</returns>
+        public bool RemoveLinkClaim(Guid gameId, string sourceId, string url)
+        {
+            lock (_decisionSync)
+                return MutateClaims(
+                    gameId,
+                    (claims) => claims.RemoveAll(c =>
+                        string.Equals(c.SourceId, sourceId, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(c.Url, url, StringComparison.OrdinalIgnoreCase))) > 0;
+        }
+
+        /// <summary>
+        /// Drops every claim whose URL is no longer in the game's Links - the user deleted the row, so
+        /// the ledger must stop describing it. Left alone, a stale claim would make a row the user
+        /// re-added by hand ours again, and a later pass would delete it from under them.
+        /// </summary>
+        /// <returns>The number of claims dropped.</returns>
+        public int PruneLinkClaims(Guid gameId, ICollection<string> presentUrls)
+        {
+            var present = new HashSet<string>(presentUrls, StringComparer.OrdinalIgnoreCase);
+            lock (_decisionSync)
+                return MutateClaims(gameId, (claims) => claims.RemoveAll(c => !present.Contains(c.Url)));
+        }
+
+        /// <summary>Drops every claim on one game (the game was deleted, or its whole decision set was).</summary>
+        /// <returns>True when the ledger changed.</returns>
+        public bool ClearLinkClaimsForGame(Guid gameId)
+        {
+            lock (_decisionSync)
+                return MutateClaims(gameId, (claims) => claims.RemoveAll(_ => true)) > 0;
+        }
+
+        /// <summary>
+        /// Drops the whole ledger. Only the uninstall path should call it, and only once it has already
+        /// used the ledger to remove the rows it names - clearing it first is how rows become orphans.
+        /// </summary>
+        public int ClearAllLinkClaims()
+        {
+            lock (_decisionSync)
+            {
+                var count = LinkClaimCountUnsafe();
+                if (count == 0)
+                    return 0;
+
+                PublishLedger(new Dictionary<string, string>());
+                return count;
+            }
+        }
+
+        /// <summary>
+        /// Records a batch of claims the plugin did not write in this session - the adoption migration
+        /// for rows an older version created before the ledger existed. Claims already present are
+        /// ignored, and the whole batch publishes once.
+        /// </summary>
+        /// <returns>The number of claims actually added.</returns>
+        public int AdoptLinkClaims(IReadOnlyList<(Guid GameId, string SourceId, string Name, string Url)> claims)
+        {
+            if (claims.Count == 0)
+                return 0;
+
+            lock (_decisionSync)
+            {
+                var next = WritableCopyOf(Ledger());
+                var added = 0;
+                foreach (var (gameId, sourceId, name, url) in claims)
+                {
+                    var key = gameId.ToString("D");
+                    var existing = SourceLinkClaim.Parse(next.TryGetValue(key, out var stored) ? stored : string.Empty);
+                    var claim = new SourceLinkClaim(sourceId, name, url);
+                    var duplicate = false;
+                    foreach (var e in existing)
+                    {
+                        if (e.SameClaim(claim))
+                        {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+
+                    if (duplicate)
+                        continue;
+
+                    next[key] = SourceLinkClaim.EncodeAll(
+                        existing.Length == 0 ? new[] { claim } : Append(existing, claim));
+                    added++;
+                }
+
+                if (added == 0)
+                    return 0;
+
+                PublishLedger(next);
+                return added;
+            }
+        }
+
+        private static SourceLinkClaim[] Append(SourceLinkClaim[] existing, SourceLinkClaim claim)
+        {
+            var all = new SourceLinkClaim[existing.Length + 1];
+            Array.Copy(existing, all, existing.Length);
+            all[existing.Length] = claim;
+            return all;
+        }
+
+        private List<SourceLinkClaim> GetLinkClaimsUnsafe(Guid gameId)
+            => Ledger().TryGetValue(gameId.ToString("D"), out var value)
+                ? new List<SourceLinkClaim>(SourceLinkClaim.Parse(value))
+                : new List<SourceLinkClaim>();
+
+        private int LinkClaimCountUnsafe()
+        {
+            var total = 0;
+            foreach (var value in Ledger().Values)
+                total += SourceLinkClaim.Parse(value).Length;
+            return total;
+        }
+
+        /// <summary>
+        /// Applies <paramref name="remove"/> to one game's claims and writes the result, publishing only
+        /// when the stored value really differs. Returns how many claims the mutator removed, so a caller
+        /// can log a count - and so an unchanged pass costs no copy of the map. Call only while holding
+        /// <see cref="_decisionSync"/>.
+        /// </summary>
+        private int MutateClaims(Guid gameId, Func<List<SourceLinkClaim>, int> remove)
+        {
+            var claims = GetLinkClaimsUnsafe(gameId);
+            if (claims.Count == 0)
+                return 0;
+
+            var removed = remove(claims);
+            if (removed == 0)
+                return 0;
+
+            return WriteClaims(gameId, claims) ? removed : 0;
+        }
+
+        /// <summary>
+        /// Writes one game's claims into a clone of the published map and publishes it, or removes the
+        /// key when the game ends up with none. Returns false when nothing changed, so an unchanged pass
+        /// costs no copy of a map the size of the library's link count.
+        /// </summary>
+        private bool WriteClaims(Guid gameId, List<SourceLinkClaim> claims)
+        {
+            var key = gameId.ToString("D");
+            var current = Ledger();
+            if (claims.Count == 0)
+            {
+                if (!current.ContainsKey(key))
+                    return false;
+
+                var without = WritableCopyOf(current);
+                without.Remove(key);
+                PublishLedger(without);
+                return true;
+            }
+
+            var value = SourceLinkClaim.EncodeAll(claims.ToArray());
+            if (current.TryGetValue(key, out var existing) && string.Equals(existing, value, StringComparison.Ordinal))
+                return false;
+
+            var copy = WritableCopyOf(current);
+            copy[key] = value;
+            PublishLedger(copy);
+            return true;
+        }
+
+        #endregion
+
         /// <summary>
         /// The format used to store per-decision timestamps in <see cref="DecisionTimestamps"/>
-        /// (ISO 8601 round-trip, full precision, UTC — the "O" format).
+        /// (ISO 8601 round-trip, full precision, UTC - the "O" format).
         /// </summary>
         private const string DecisionTimestampFormat = "O";
         private static readonly string[] DecisionKeySeparators = { "||" };

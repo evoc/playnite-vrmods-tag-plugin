@@ -132,10 +132,17 @@ with no Steam link, match by name exactly as they always did.
   cards). Its row is gone, so there is nothing to review. When another source still
   lists the game, its rows and tags are untouched: that is the union above working
   as intended, and it is why one source going quiet is not a loss. When nothing
-  else lists it, the plugin's own tags come off, its source link goes, and the
-  decision you made about that pairing is cleared with them — so if a mod for that
-  game ever appears, you are asked again rather than having it applied on an old
-  yes.
+  else lists it, the plugin's own tags come off and the decision you made
+  about that pairing is cleared with them — so if a mod for that game ever
+  appears, you are asked again rather than having it applied on an old yes.
+  **The link is usually the one thing that stays.** The plugin recognises a link
+  of its own by the source page behind it; with no source listing that card any
+  more, there is nothing left to recognise it by, and it will not guess and
+  delete a link you might have added yourself. Remove it on the game's **Links**
+  section if you want it gone. The exception is a link the plugin knows it wrote
+  and no longer writes: when we change where a source's links point, the old
+  links come off on the next scan, because the plugin states in its own code
+  which rows its earlier versions wrote.
 - The library menu offers the same decisions one game at a time: a game's
   right-click menu → **VRMod Tags** → **Reset my decisions for this
   game...** or **Reject all assigned VR mods on this game...**. What each

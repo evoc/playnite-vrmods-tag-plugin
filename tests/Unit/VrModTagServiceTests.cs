@@ -436,7 +436,7 @@ namespace PlayniteVRMods.Tests.Unit
 
             var parser = new TestParser(new[]
             {
-                new VrModEntry { GameName = "Skyrim", Category = "UEVR", SourceUrl = "https://pcvrcentral.com/game/skyrim" }
+                new VrModEntry { GameName = "Skyrim", Category = "UEVR", SourceUrl = "https://example.com/game/skyrim" }
             });
             _registry.Register(parser);
 
@@ -462,7 +462,7 @@ namespace PlayniteVRMods.Tests.Unit
             // Data-loss guard: tags AND the plugin source link survive a failed source.
             Assert.That(skyrim.TagIds, Is.Not.Empty);
             Assert.That(skyrim.Links, Has.Count.EqualTo(1));
-            Assert.That(skyrim.Links![0].Url, Is.EqualTo("https://pcvrcentral.com/game/skyrim"));
+            Assert.That(skyrim.Links![0].Url, Is.EqualTo("https://example.com/game/skyrim"));
         }
 
         [Test]
@@ -1069,7 +1069,7 @@ namespace PlayniteVRMods.Tests.Unit
 
             var parser = new TestParser(new[]
             {
-                new VrModEntry { GameName = "Skyrim", Category = "UEVR", SourceUrl = "https://pcvrcentral.com/game/skyrim" }
+                new VrModEntry { GameName = "Skyrim", Category = "UEVR", SourceUrl = "https://example.com/game/skyrim" }
             });
             _registry.Register(parser);
 
@@ -1091,7 +1091,7 @@ namespace PlayniteVRMods.Tests.Unit
 
             Assert.That(skyrim.TagIds, Is.Not.Empty);
             Assert.That(skyrim.Links, Has.Count.EqualTo(1));
-            Assert.That(skyrim.Links![0].Url, Is.EqualTo("https://pcvrcentral.com/game/skyrim"));
+            Assert.That(skyrim.Links![0].Url, Is.EqualTo("https://example.com/game/skyrim"));
         }
 
         [Test]

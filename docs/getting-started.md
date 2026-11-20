@@ -178,6 +178,15 @@ Your settings and your saved decisions survive the update.
 
 Remove "VRMod Tags" from Playnite's **Add-ons** window, then restart Playnite.
 The plugin detects the queued uninstall as Playnite shuts down and removes
-everything it added: all `VRMod*` tags from your games, the source links on
-matched games, the `VRMod*` tag definitions, and its own settings file. Playnite
-then deletes the plugin files on startup — nothing of the plugin is left behind.
+everything it can still recognise as its own: all `VRMod*` tags from your games,
+the source links it added, the `VRMod*` tag definitions, and its own settings
+file. Playnite then deletes the plugin files on startup.
+
+The plugin keeps its own record of the links it added, so they are removed even
+from games that no longer match any source any more — you do not have to clean up
+links behind mods that were taken off a source's list.
+
+One case can still leave a link behind: a link that carries the name of one of our
+sources but points at a site that source does not publish from. That is
+indistinguishable from a link you typed yourself, and guessing would mean deleting
+something you made. Delete it on the game's **Links** section if you want it gone.

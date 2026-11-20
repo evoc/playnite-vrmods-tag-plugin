@@ -90,5 +90,55 @@ namespace PlayniteVRMods.Tests.Unit
         {
             Assert.That(WebUrl.IsSafeLinkUrl(url), Is.True);
         }
+
+        /// <summary>
+        /// Same-site test behind the source-link rule: a link the plugin writes must live on the
+        /// site of the source that published it, so it is a page that source owns — a mod page, a
+        /// game page on the source, or the source's front door. "One site" ignores a leading
+        /// "www." (sources publish both spellings) and the scheme, but not the port.
+        /// </summary>
+        [TestCase("https://www.example.com/games/skyrim/", "https://example.com/")]
+        [TestCase("https://example.com/games/skyrim/", "https://www.example.com/")]
+        [TestCase("https://example.com", "https://www.example.com")]
+        [TestCase("https://example.com/mod", "http://example.com/")]
+        [TestCase("https://EXAMPLE.com/a", "https://example.com/")]
+        [TestCase("https://example.com:8443/a", "https://example.com:8443/")]
+        [TestCase("https://compoundvr.com/games/a-plague-tale-innocence/", "https://compoundvr.com")]
+        public void SameSiteHost_AcceptsOneSiteUnderBothSpellings(string url, string siteUrl)
+        {
+            Assert.That(WebUrl.IsSameSiteHost(url, siteUrl), Is.True);
+        }
+
+        /// <summary>
+        /// Everything a source link must not be: another site's page for the game (the Flat2VR
+        /// off-site cards, the curator sources' store pages), a host built to look familiar, a
+        /// different port, a credential-confusion URL, or something that is not a link the plugin
+        /// could vouch for.
+        /// </summary>
+        [TestCase("https://postal2vr.com/", "https://flat2vrstudios.com/")]
+        [TestCase("https://store.steampowered.com/app/72850/", "https://modsource.example/")]
+        [TestCase("https://pcvrcentral.com.evil.tld/games/a", "https://pcvrcentral.com/")]
+        [TestCase("https://www2.example.com/a", "https://example.com/")]
+        [TestCase("https://example.com:8443/a", "https://example.com/")]
+        [TestCase("https://example.com/a", "https://other.example/")]
+        [TestCase("https://pcvr-central.com@evil.tld/skyrim", "https://pcvrcentral.com/")]
+        [TestCase("https://example.com/a", null)]
+        [TestCase(null, "https://example.com/")]
+        [TestCase("games/skyrim", "https://example.com/")]
+        [TestCase("file:///C:/mods/skyrim.html", "https://example.com/")]
+        public void SameSiteHost_RejectsAnyOtherSite(string? url, string? siteUrl)
+        {
+            Assert.That(WebUrl.IsSameSiteHost(url, siteUrl), Is.False);
+        }
+
+        /// <summary>Which side of the pair carries the "www." must not change the answer, or the
+        /// rule depends on how a source happened to register itself.</summary>
+        [Test]
+        public void SameSiteHost_IsSymmetric()
+        {
+            Assert.That(
+                WebUrl.IsSameSiteHost("https://www.example.com/a", "https://example.com/"),
+                Is.EqualTo(WebUrl.IsSameSiteHost("https://example.com/a", "https://www.example.com/")));
+        }
     }
 }
