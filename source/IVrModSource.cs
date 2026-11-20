@@ -93,5 +93,21 @@ namespace Playnite.VRMods
         /// <param name="entry">The VR mod entry to extract a name from.</param>
         /// <returns>The cleaned game name, or null if extraction fails.</returns>
         string? GetCanonicalName(VrModEntry entry);
+
+        /// <summary>
+        /// Link rows this source wrote in an earlier plugin version and no longer writes, so the
+        /// games still holding them should lose them.
+        ///
+        /// The reconcile owns a link only if it can re-derive it from what it would write today, so
+        /// a row an older version derived from data that has since gone is invisible to it and stays
+        /// in the library for ever. A rule here is the plugin stating that it wrote such a row;
+        /// <see cref="RetiredLinkRule"/> explains what makes one defensible. Empty for a source that
+        /// has never changed what it links to — today that is every source but the two curator
+        /// lists, which used to link each game's Steam store page.
+        ///
+        /// Retirement is independent of whether the source is enabled or has its links turned on:
+        /// cleaning up a row we wrote is not authoring a new one.
+        /// </summary>
+        IReadOnlyList<RetiredLinkRule> RetiredLinks { get; }
     }
 }

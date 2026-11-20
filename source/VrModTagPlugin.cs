@@ -145,6 +145,11 @@ namespace Playnite.VRMods
             // Create tag service (initialized with settings and logger)
             _tagService = new VrModTagService(api, _settingsViewModel.Settings, Logger, _registry);
 
+            // The service writes the source-link ledger while it works, and it cannot write its own
+            // config.json: Playnite does not rewrite an extension's settings file on exit, so the only
+            // code that persists it is below. A scan is not a settings edit, so the service has to ask.
+            _tagService.SettingsPersistRequested += PersistSettingsWhenServiceAsks;
+
             // Subscribe to settings change events (cache refresh, timer restart, etc.)
             _settingsViewModel.PropertyChanged += OnSettingsChanged;
         }
@@ -191,6 +196,61 @@ namespace Playnite.VRMods
             return new VrModSettingsView { DataContext = _settingsViewModel };
         }
 
+        /// <summary>The migration stamp written into settings once the source-link ledger has adopted
+        /// the rows older versions of the plugin wrote. Bump it to re-run the adoption pass after a
+        /// change to what counts as our authorship.</summary>
+        private const int SourceLinkLedgerMigrationVersion = 1;
+
+        /// <summary>Writes the settings the service just changed. Safe from a background thread - every
+        /// menu and scan save path already does this off the UI thread - and called only when the service
+        /// reports a change, so a scan that touched nothing writes nothing.</summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "Design", "CA1031:Do not catch general exception types",
+            Justification = "Settings persistence: a failed write must not fail the scan that made the change. The ledger is re-derived from the library by the startup adoption, so the next start rebuilds what this one could not save.")]
+        private void PersistSettingsWhenServiceAsks()
+        {
+            try
+            {
+                SavePluginSettings(_tagService.Settings);
+            }
+            catch (Exception ex)
+            {
+                // Losing the write is not a reason to fail the scan that made the change: the ledger is
+                // re-derived from the library by the startup adoption, so the next start rebuilds what
+                // this one could not save. The rows themselves are already in Playnite's database.
+                Logger.Error($"VRMod: could not save the source-link ledger; it will be rebuilt from the library at next start: {ex}");
+            }
+        }
+
+        /// <summary>
+        /// Runs the source-link ledger adoption once per install, then stamps settings so it does not
+        /// walk the library again on every start.
+        /// </summary>
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "Design", "CA1031:Do not catch general exception types",
+            Justification = "A whole-library pass over Playnite's database, WPF-bound link collections and a settings write: the failure vocabulary is not a closed set, and the contract here is that a failed migration leaves the library exactly as it was and the startup scan still runs.")]
+        private void AdoptSourceLinkLedger()
+        {
+            var settings = _tagService.Settings;
+            if (settings.SourceLinkLedgerVersion >= SourceLinkLedgerMigrationVersion)
+                return;
+
+            try
+            {
+                var adopted = _tagService.AdoptExistingSourceLinks();
+                settings.SourceLinkLedgerVersion = SourceLinkLedgerMigrationVersion;
+                SavePluginSettings(settings);
+                Logger.Info($"VRMod Tags: source-link ledger migration done, {adopted} row(s) claimed.");
+            }
+            catch (Exception ex)
+            {
+                // A failed migration must never take the startup scan with it. With no claims the
+                // reconcile is exactly as conservative as it was before the ledger existed: it removes
+                // what it can still re-derive, and leaves the rest alone.
+                Logger.Error($"VRMod Tags: source-link ledger migration failed, links stay exactly as they are: {ex}");
+            }
+        }
+
         /// <summary>
         /// Called when Playnite application starts (first install or app launch).
         ///
@@ -211,6 +271,11 @@ namespace Playnite.VRMods
             // covered by the startup full scan below; only games added to the library AFTER
             // this point are "new" and get the fast single-game path (OnLibraryUpdated).
             _tagService.SeedKnownGames();
+
+            // One-shot, and deliberately before the scan that uses its result: claim the source links
+            // older versions of this plugin wrote. Adoption removes nothing by itself - it is what lets
+            // this run's reconcile see rows it would otherwise walk past.
+            AdoptSourceLinkLedger();
 
             // Run full scan with review dialog for Pending matches.
             // Observe the task so a fault (e.g. inside the review dialog) is logged

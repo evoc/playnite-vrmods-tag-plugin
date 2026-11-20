@@ -1806,6 +1806,10 @@ namespace Playnite.VRMods
                     if (ReconcileSourceLinksCore(game))
                         _api.Database.Games.Update(game);
                 }
+
+                // …and the games this loop cannot see: ones we wrote a link for that no longer match
+                // anything, so they hold no tag, carry no decision, and appear in no current-match set.
+                ReconcileLedgeredGames(keepGameIds);
             }
 
             // Vocabulary rename (see MigrateLegacyTagNames). Deliberately outside the failed-source guard:
@@ -1839,6 +1843,9 @@ namespace Playnite.VRMods
             LogScanSummary(statsBySource, currentMatchedGames, pendingMatches);
 
             _logger.Info($"VRMod Tag Service: Full scan complete. {currentMatchedGames.Count} game(s) tagged, {pendingMatches.Count} pending review.");
+
+            // The scan is the main writer to the ledger, and nothing else will persist what it decided.
+            FlushLedgerChanges();
             return true;
         }
 
@@ -2169,6 +2176,8 @@ namespace Playnite.VRMods
             {
                 ScanGameCore(game, allEntries, failedSources, reviewCallback);
             }
+
+            FlushLedgerChanges();
         }
 
         /// <summary>
@@ -3229,6 +3238,8 @@ namespace Playnite.VRMods
             }
 
             _logger.Info($"VRMod Tag Service: Reset {gameList.Count} game(s); {gamesChanged} game(s) had tags or links to clean.");
+            // Whatever this pass removed from the links, it also dropped from the ledger; see RemoveTagsForSource.
+            FlushLedgerChanges();
             return gamesChanged;
         }
 
@@ -3554,6 +3565,13 @@ namespace Playnite.VRMods
             foreach (var game in gamesToUpdate)
                 _api.Database.Games.Update(game);
 
+            // The ledger goes here, not at the caller. This runs from the settings dialog, which only
+            // writes that file if the user presses Save afterwards - dismiss it instead and the links are
+            // already off the games while the file still says they are ours. An operation that moved the
+            // ledger asks for the write itself, whatever the caller does next; it is a no-op when the
+            // ledger did not move, so a pass that changed no links still writes nothing.
+            FlushLedgerChanges();
+
             return gamesToUpdate.Count;
         }
 
@@ -3634,6 +3652,12 @@ namespace Playnite.VRMods
                 foreach (var game in gamesToUpdate)
                     _api.Database.Games.Update(game);
             }
+
+            // Flushed here for the same reason as RemoveTagsForSource, and sharper here: the review
+            // dialog's reset writes settings *before* it asks for this removal, so on this path the
+            // caller's save cannot possibly cover it - the links come off the games after the file was
+            // written, and the file keeps claiming rows that no longer exist.
+            FlushLedgerChanges();
 
             return gamesToUpdate.Count;
         }
@@ -3737,6 +3761,8 @@ namespace Playnite.VRMods
             }
 
             _logger.Info($"VRMod Tag Service: Reject: vetoed {writes.Count} listing(s) over {gameList.Count} game(s); {gamesChanged} game(s) changed.");
+            // Whatever this pass removed from the links, it also dropped from the ledger; see RemoveTagsForSource.
+            FlushLedgerChanges();
             return (writes.Count, gamesChanged);
         }
 
@@ -3849,10 +3875,13 @@ namespace Playnite.VRMods
 
         /// <summary>
         /// Complete uninstall cleanup: clears all match decisions, removes every VRMod tag
-        /// (from the games and from the tag collection) and every plugin-owned source link,
-        /// so the shared library has no trace of the plugin. Called only when Playnite queued
-        /// this plugin for uninstall (see <c>VrModTagPlugin</c> Dispose) — never on a normal
-        /// shutdown.
+        /// (from the games and from the tag collection) and every source link it can still
+        /// identify as one it wrote, so the shared library keeps nothing the plugin still
+        /// stands behind. What counts as “one it wrote” is decided by the pages the sources
+        /// publish (see <see cref="BuildLinkPlan"/>): a link whose card no source lists any
+        /// more is no longer recognisable as ours, and stays — guessing there would risk
+        /// deleting a link the user added. Called only when Playnite queued this plugin for
+        /// uninstall (see <c>VrModTagPlugin</c> Dispose) — never on a normal shutdown.
         /// </summary>
         public void UninstallCleanup()
         {
@@ -3860,6 +3889,31 @@ namespace Playnite.VRMods
             // against the cleared decisions and removes every plugin-owned link.
             _settings.ClearAllDecisions();
             RemoveAllVrModTags();
+
+            // RemoveAllVrModTags walks tagged games, so it cannot reach a row we wrote on a game that
+            // has no plugin tag - the same blind spot the stale-tag sweep has. The uninstall promise is
+            // "no plugin-named link survives", which is only true if the ledger gets the last word:
+            // reconcile every game it names, then drop the ledger itself.
+            var orphaned = 0;
+            foreach (var gameId in _settings.GetGamesWithLinkClaims())
+            {
+                var game = _api.Database.Games.Get(gameId);
+                if (game == null)
+                    continue;
+                if (ReconcileSourceLinksCore(game))
+                {
+                    _api.Database.Games.Update(game);
+                    orphaned++;
+                }
+            }
+
+            var dropped = _settings.ClearAllLinkClaims();
+            if (orphaned > 0 || dropped > 0)
+            {
+                _logger.Info(
+                    $"VRMod Tag Service: Uninstall cleanup reached {orphaned} untagged game(s) through the ledger"
+                    + $", cleared {dropped} ledger entry(ies).");
+            }
 
             // Remove the tag definitions too, so no orphaned VRMod* tags remain in the user's
             // tag collection (nothing references them anymore). Each Remove is persisted
@@ -3878,6 +3932,122 @@ namespace Playnite.VRMods
         }
 
         #region Source link reconciliation
+
+        /// <summary>
+        /// Called when the service has changed state that only the plugin can persist. Playnite does not
+        /// rewrite this plugin's config.json on exit - the plugin's own save calls are what write that
+        /// file - and a scan is not a settings edit, so without this the ledger would live only in memory
+        /// for the run: the claims dropped when a row was removed would come back from the stale file on
+        /// the next start, along with the row they describe.
+        ///
+        /// A settable callback rather than an event because there is exactly one subscriber (the plugin
+        /// that owns the settings file) and the service raises it at most once per operation.
+        /// </summary>
+        public Action? SettingsPersistRequested { get; set; }
+
+        /// <summary>
+        /// Asks the plugin to write settings if the ledger changed since the last request. Call at the end
+        /// of an operation that can mutate links, never per game: the ledger is written under a lock and
+        /// cloned per change, but the file write is 480 KB and belongs once per scan, not 400 times.
+        /// </summary>
+        private void FlushLedgerChanges()
+        {
+            if (!_settings.ConsumePendingLedgerWrites())
+                return;
+
+            SettingsPersistRequested?.Invoke();
+        }
+
+        /// <summary>
+        /// One-shot migration: record a ledger claim for every source-link row on this library that only
+        /// an older version of this plugin could have written, so those rows stay removable.
+        ///
+        /// The ledger is written as links are added, so a fresh install needs nothing. An existing
+        /// library is the problem: it holds rows from versions that kept no record, and without a claim
+        /// the reconcile has no way to tell them from a link the user typed. This runs once, before the
+        /// startup scan, and adoption alone deletes nothing - it only makes the next reconcile able to
+        /// see rows it could previously only walk past.
+        ///
+        /// The evidence for "only we could have written this" is the pair the writer itself would
+        /// produce: the row's name is exactly that source's display name AND the URL is on that source's
+        /// own site. Name alone would sweep up any link the user happened to caption with our source's
+        /// name; site alone would sweep up the game's page on a big host, which is what retired shapes
+        /// and Playnite's own imports both look like. Rows any source has retired are skipped outright,
+        /// so a store-page leftover is never adopted into a claim - retire comes before adopt, in this
+        /// pass too.
+        /// </summary>
+        /// <returns>The number of claims recorded (0 on every later run).</returns>
+        public int AdoptExistingSourceLinks()
+        {
+            List<RetiredLinkRule>? retired = null;
+            foreach (var source in _registry.Sources)
+            {
+                var rules = source.RetiredLinks;
+                if (rules.Count > 0)
+                {
+                    retired ??= new List<RetiredLinkRule>();
+                    retired.AddRange(rules);
+                }
+            }
+
+            var batch = new List<(Guid GameId, string SourceId, string Name, string Url)>();
+            foreach (var game in _api.Database.Games)
+            {
+                var links = game.Links;
+                if (links == null || links.Count == 0)
+                    continue;
+
+                foreach (var link in links)
+                {
+                    if (string.IsNullOrWhiteSpace(link.Url) || string.IsNullOrWhiteSpace(link.Name))
+                        continue;
+
+                    // Retire before adopt: a row we stopped writing must go, not gain a claim.
+                    if (retired != null && retired.Any(r => r.Matches(link.Name, link.Url)))
+                        continue;
+
+                    var owner = FindAdoptableSource(link.Name, link.Url);
+                    if (owner == null)
+                        continue;
+
+                    batch.Add((game.Id, owner, link.Name!, link.Url!));
+                }
+            }
+
+            var adopted = _settings.AdoptLinkClaims(batch);
+            if (adopted > 0)
+            {
+                _logger.Info(
+                    $"VRMod Tag Service: Adopted {adopted} source link(s) written by an older version into the ledger "
+                    + $"({batch.Count} candidate row(s) matched a source's own name and site).");
+            }
+
+            return adopted;
+        }
+
+        /// <summary>
+        /// The source whose own name and own site a link row carries, or null when no registered source
+        /// can claim authorship of it. Disabled sources count: a row they wrote while switched on is
+        /// still ours, and remembering that is the only way it can ever be removed again.
+        /// </summary>
+        private string? FindAdoptableSource(string linkName, string url)
+        {
+            foreach (var source in _registry.Sources)
+            {
+                if (string.IsNullOrWhiteSpace(source.WebsiteUrl))
+                    continue;
+                if (!string.Equals(source.DisplayName, linkName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                // Either the exact page we hand out, or any page on the site that publishes the mod -
+                // the same two cases the writer distinguishes between.
+                if (string.Equals(url.TrimEnd('/'), source.WebsiteUrl.TrimEnd('/'), StringComparison.OrdinalIgnoreCase)
+                    || WebUrl.IsSameSiteHost(url, source.WebsiteUrl))
+                    return source.SourceId;
+            }
+
+            return null;
+        }
 
         /// <summary>
         /// Whether the user saved an Accepted decision for this match for this game.
@@ -3914,17 +4084,27 @@ namespace Playnite.VRMods
         }
 
         /// <summary>
-        /// The link target for an entry's source link: the per-game deep link if the parser
-        /// provided one, otherwise the source's own website. Empty if neither is available.
+        /// The link target for an entry's source link: the mod's page on the source's own site when
+        /// the parser provided one, otherwise the source's general page, where the user can search
+        /// for the game. Never a third party's page - a deep link from another site is a game's
+        /// store page or the original publisher's home, and neither says anything about the mod -
+        /// so a foreign host falls back to the source's own page. Empty if neither is available.
         /// </summary>
         public string GetSourceLinkUrl(VrModEntry entry)
         {
             // Defense in depth on top of VrModEntry.SourceUrls validation: this value is written
             // into the library as a Playnite Link, and Playnite opens a Link with the OS shell
             // without checking the scheme, so an unsafe scraped URL must never leave here.
-            if (WebUrl.IsSafeLinkUrl(entry.SourceUrl))
-                return entry.SourceUrl!;
             var website = GetSourceWebsiteUrl(entry);
+            if (WebUrl.IsSafeLinkUrl(entry.SourceUrl))
+            {
+                // Same-site rule, enforced once here so no parser can regress it. It is only
+                // applied when the source's own site is on record: with no website to compare
+                // against (a source that is not registered) the choice would be a guess, and
+                // dropping a working link is the worse guess.
+                if (website.Length == 0 || WebUrl.IsSameSiteHost(entry.SourceUrl, website))
+                    return entry.SourceUrl!;
+            }
             return WebUrl.IsSafeLinkUrl(website) ? website : string.Empty;
         }
 
@@ -3949,6 +4129,57 @@ namespace Playnite.VRMods
         {
             if (ReconcileSourceLinksCore(game))
                 _api.Database.Games.Update(game);
+        }
+
+        /// <summary>
+        /// Reconciles source links on every game the ledger names that this pass did not already visit.
+        ///
+        /// The scan reconciles the games that matched this time. That is the whole set a healthy library
+        /// needs, and the whole set a leak needs too: a game we linked in an older version, whose match
+        /// has since disappeared, has no tag (so the stale-tag sweep, which walks tagged games, skips
+        /// it), no decision (the sweep cleared them on the way out), and no current match (so the scan
+        /// never asks about it). Nothing in a later pass ever looks at its Links again. Measured on a
+        /// live 3 045-game library: 114 rows we wrote, 26 of them on games that no longer carry a
+        /// VRMod tag, and no path that could remove them.
+        ///
+        /// The ledger is the index of exactly those games, and it is small - it names what we touched,
+        /// not the library - so reaching them costs one lookup per game we ever wrote.
+        /// </summary>
+        private void ReconcileLedgeredGames(HashSet<Guid> alreadyReconciled)
+        {
+            var reconciled = 0;
+            var forgotten = 0;
+
+            // A snapshot list, not the live map: reconciliation drops claims, and dropping the entry
+            // being enumerated would throw halfway through the sweep.
+            foreach (var gameId in _settings.GetGamesWithLinkClaims())
+            {
+                if (alreadyReconciled.Contains(gameId))
+                    continue;
+
+                var game = _api.Database.Games.Get(gameId);
+                if (game == null)
+                {
+                    // The game left the library. Its rows went with it, so its claims must too, or the
+                    // ledger grows by every game the user ever deletes and this sweep never converges.
+                    _settings.ClearLinkClaimsForGame(gameId);
+                    forgotten++;
+                    continue;
+                }
+
+                if (ReconcileSourceLinksCore(game))
+                {
+                    _api.Database.Games.Update(game);
+                    reconciled++;
+                }
+            }
+
+            if (reconciled > 0 || forgotten > 0)
+            {
+                _logger.Info(
+                    $"VRMod Tag Service: Reconciled ledgered links on {reconciled} game(s) no current match reaches" +
+                    (forgotten > 0 ? $", forgot {forgotten} game(s) no longer in the library" : string.Empty) + ".");
+            }
         }
 
         /// <summary>
@@ -4028,14 +4259,36 @@ namespace Playnite.VRMods
                     continue;
                 AddOwnedLink(owned, entry);
             }
+            // Rows this plugin wrote on an earlier pass, whatever produced them. This is the input the
+            // two above cannot replace: for a game whose match went away there are no entries here, and
+            // once the stale-tag sweep has cleared its decisions there are no decisions either - so
+            // nothing above can name the row still sitting on that game, and the row outlives every
+            // trace of why it was added. The ledger remembers, which is what makes the row ours to
+            // remove again instead of litter in the user's library forever.
+            var claims = _settings.GetLinkClaims(game.Id);
+            foreach (var claim in claims)
+                owned.Add(OwnedKey(claim.Name, claim.Url));
+
+            List<RetiredLinkRule>? retiredRules = null;
             foreach (var source in _registry.Sources)
             {
                 if (!string.IsNullOrEmpty(source.WebsiteUrl))
                     owned.Add(OwnedKey(source.DisplayName, source.WebsiteUrl));
+
+                // Rows this source's older versions wrote and nothing generates any more. Gathered
+                // from every registered source, disabled ones included: removing a row we wrote is
+                // not authoring a new one, so a source being switched off is no reason to keep its
+                // leftovers. Most sources retire nothing, so this stays empty in the common case.
+                var rules = source.RetiredLinks;
+                if (rules.Count > 0)
+                {
+                    retiredRules ??= new List<RetiredLinkRule>();
+                    retiredRules.AddRange(rules);
+                }
             }
 
             var desired = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            var desiredUrls = new List<(string Name, string Url)>();
+            var desiredUrls = new List<(string SourceId, string Name, string Url)>();
             foreach (var entry in gameEntries)
             {
                 var sourceId = entry.SourceId ?? string.Empty;
@@ -4052,13 +4305,17 @@ namespace Playnite.VRMods
                 if (url.Length == 0)
                     continue;
                 var key = OwnedKey(GetSourceDisplayName(entry), url);
-                if (desired.Contains(key))
-                    continue;
                 desired.Add(key);
-                desiredUrls.Add((GetSourceDisplayName(entry), url));
+
+                // Not deduplicated by key, deliberately. Two sources can want the same row, and the
+                // ledger needs one claim per claimant, not one per row: collapse them here and the
+                // second claimant is invisible, so when the first withdraws, the row that the other one
+                // still wants is removed and re-added inside one pass. ApplyLinkPlan is idempotent per
+                // URL, so listing both costs nothing but the ledger's accuracy.
+                desiredUrls.Add((sourceId, GetSourceDisplayName(entry), url));
             }
 
-            return new LinkPlan(owned, desired, desiredUrls);
+            return new LinkPlan(owned, desired, desiredUrls, retiredRules, claims);
         }
 
         /// <summary>
@@ -4076,22 +4333,52 @@ namespace Playnite.VRMods
             var links = game.Links;
             if (links != null)
             {
+                var retiring = plan.Retired;
                 for (var i = links.Count - 1; i >= 0; i--)
                 {
                     var link = links[i];
+
+                    // Retired rows go first, ahead of the ownership test - which is the whole point:
+                    // a row an old version wrote from data that has since gone is precisely the row
+                    // the ownership test can no longer see. Done before the additions below, so a
+                    // row is never retired and then re-derived in the same pass.
+                    var retiredRule = retiring == null
+                        ? null
+                        : retiring.FirstOrDefault(r => r.Matches(link.Name, link.Url));
+                    if (retiredRule != null)
+                    {
+                        links.RemoveAt(i);
+                        changed = true;
+                        DropClaimsFor(game.Id, plan, link);
+                        _logger.Info($"VRMod Tag Service: Removed retired source link '{link.Name}' from '{SafeLogText(game.Name)}' ({retiredRule.Why}).");
+                        continue;
+                    }
+
                     var key = OwnedKey(link.Name ?? string.Empty, link.Url ?? string.Empty);
                     if (owned.Contains(key) && !desired.Contains(key))
                     {
                         links.RemoveAt(i);
                         changed = true;
+                        DropClaimsFor(game.Id, plan, link);
                         _logger.Info($"VRMod Tag Service: Removed source link '{link.Name}' from '{SafeLogText(game.Name)}' (no longer a saved accepted match).");
                     }
                 }
             }
-            foreach (var (name, url) in desiredUrls)
+            foreach (var (sourceId, name, url) in desiredUrls)
             {
-                if (links == null || links.Any(l => string.Equals(l.Url, url, StringComparison.OrdinalIgnoreCase)))
+                var existing = links?.FirstOrDefault(l => string.Equals(l.Url, url, StringComparison.OrdinalIgnoreCase));
+                if (existing != null)
+                {
+                    // The row is already here. Claim it only if it carries our name too - that is a row
+                    // we wrote in an earlier version, or a second claimant's row for the same URL, and
+                    // either way the claim is what keeps it alive while any claimant still wants it. A
+                    // row with somebody else's name on this URL is theirs, and claiming it would put a
+                    // removal instruction in our ledger against a link the user made.
+                    if (string.Equals(existing.Name, name, StringComparison.OrdinalIgnoreCase))
+                        _settings.RecordLinkClaim(game.Id, sourceId, name, url);
                     continue;
+                }
+
                 if (links == null)
                 {
                     links = new ObservableCollection<Link>();
@@ -4099,9 +4386,46 @@ namespace Playnite.VRMods
                 }
                 links.Add(new Link(name, url));
                 changed = true;
+                // Recorded with the row, not afterwards: this is the moment we know the source, the
+                // name and the URL together, and it is the only evidence a later version can have that
+                // this row is ours.
+                _settings.RecordLinkClaim(game.Id, sourceId, name, url);
                 _logger.Info($"VRMod Tag Service: Added source link '{name}' to '{SafeLogText(game.Name)}'.");
             }
+
+            if (plan.Claims.Count > 0)
+            {
+                // A claim whose row is gone describes nothing. Left in place it would make a link the
+                // user typed by hand ours again - same URL, and the next pass would delete it from under
+                // them - so the ledger is reconciled against reality on every pass that had claims.
+                var present = new List<string>();
+                if (links != null)
+                {
+                    foreach (var link in links)
+                    {
+                        if (!string.IsNullOrEmpty(link.Url))
+                            present.Add(link.Url!);
+                    }
+                }
+
+                _settings.PruneLinkClaims(game.Id, present);
+            }
+
             return changed;
+        }
+
+        /// <summary>
+        /// Forgets the ledger entries for a row this pass removed. Every claim describing that exact
+        /// row goes, including a second source's claim on the same URL: the row is gone, so no claim may
+        /// survive to re-add it while that source is merely disabled.
+        /// </summary>
+        private void DropClaimsFor(Guid gameId, LinkPlan plan, Link link)
+        {
+            foreach (var claim in plan.Claims)
+            {
+                if (claim.OwnsRow(link.Name, link.Url))
+                    _settings.RemoveLinkClaim(gameId, claim.SourceId, claim.Url);
+            }
         }
 
         /// <summary>
@@ -4113,16 +4437,29 @@ namespace Playnite.VRMods
             public LinkPlan(
                 HashSet<string> owned,
                 HashSet<string> desired,
-                List<(string Name, string Url)> desiredUrls)
+                List<(string SourceId, string Name, string Url)> desiredUrls,
+                List<RetiredLinkRule>? retired,
+                List<SourceLinkClaim> claims)
             {
                 Owned = owned;
                 Desired = desired;
                 DesiredUrls = desiredUrls;
+                Retired = retired;
+                Claims = claims;
             }
 
             public HashSet<string> Owned { get; }
             public HashSet<string> Desired { get; }
-            public List<(string Name, string Url)> DesiredUrls { get; }
+            public List<(string SourceId, string Name, string Url)> DesiredUrls { get; }
+
+            /// <summary>Rows older versions wrote and this source no longer writes, null when no
+            /// registered source retires anything (the normal case). Evaluated on the UI thread,
+            /// against rows that can only be read there.</summary>
+            public List<RetiredLinkRule>? Retired { get; }
+
+            /// <summary>What the ledger says this plugin wrote on this game. Read on the planning
+            /// thread, used on the UI thread to forget rows it removes.</summary>
+            public List<SourceLinkClaim> Claims { get; }
         }
 
         /// <summary>
@@ -4392,6 +4729,10 @@ namespace Playnite.VRMods
 
             foreach (var game in gamesToUpdate)
                 _api.Database.Games.Update(game);
+
+            // Toggling a source's Links writes claims in bulk, and the toggle is not a settings edit
+            // either - the user can change it and close the page without saving.
+            FlushLedgerChanges();
         }
 
         /// <summary>

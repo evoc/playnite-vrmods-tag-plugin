@@ -54,7 +54,11 @@ namespace Playnite.VRMods
     ///    - SteamAppId   = data-ds-appid            → PRIMARY matching (exact App ID).
     ///    - GameName     = slug (underscores → spaces) → display / fallback name match.
     ///    - Category     = the category this instance was created with (UEVR / VorpX).
-    ///    - SourceUrl    = https://store.steampowered.com/app/{APPID}/   (the game's store page).
+    ///    - SourceUrls   = (none). The only page this source has per game is that game's Steam
+    ///                       store page — a page about the game, saying nothing about the mod — so
+    ///                       it is not carried. A library link must be a page the source publishes
+    ///                       about what it found, so for these listings it is the curator page
+    ///                       above. See FetchEntriesAsync for what still depends on the App ID.
     ///    - AdditionalInfo = the curator's note (trimmed, unquoted).
     ///
     ///  ── TEMPORARY FIX (2026-10-09) ────────────────────────────────────────────────────────
@@ -85,12 +89,14 @@ namespace Playnite.VRMods
         private readonly int _curatorId;
         private readonly string _category;
         private string? _lastContentHash;
+        private readonly IReadOnlyList<RetiredLinkRule> _retiredLinks;
 
         /// <summary>
         /// Creates a Steam curator source.
         /// </summary>
         /// <param name="sourceId">Unique source id (also the settings key; e.g. "SteamCuratorUEVR").</param>
-        /// <param name="displayName">Name shown in the settings UI.</param>
+        /// <param name="displayName">Name shown in the settings UI. Also the name older versions
+        /// wrote their store-page links under, which is what the retirement rule matches.</param>
         /// <param name="websiteUrl">The public curator page (settings UI link).</param>
         /// <param name="curatorId">The numeric Steam curator id used in the AJAX endpoint.</param>
         /// <param name="category">The category applied to every entry (drives the "VRMod {category}" tag).</param>
@@ -99,10 +105,26 @@ namespace Playnite.VRMods
         {
             _curatorId = curatorId;
             _category = category;
+
+            // What this source used to write as a game's source link: that game's Steam store page.
+            // Such a row is invisible to the reconcile once the source stops producing it (it owns a
+            // link only if it can re-derive one), so it has to be stated here to ever come off.
+            // Name plus shape is the evidence: a storefront URL on its own is the shape Playnite's
+            // own Steam import writes, and the name is only ours because we wrote it.
+            _retiredLinks = new[]
+            {
+                new RetiredLinkRule(
+                    displayName,
+                    @"^https?://store\.steampowered\.com/app/\d+(?:[/?#]|$)",
+                    "an older version linked the game's Steam store page, which is not a page this curator publishes")
+            };
         }
 
         /// <inheritdoc />
         public override string? ChangeIdentifier => _lastContentHash;
+
+        /// <inheritdoc />
+        public override IReadOnlyList<RetiredLinkRule> RetiredLinks => _retiredLinks;
 
         /// <inheritdoc />
         public override string? GetCanonicalName(VrModEntry entry)
@@ -164,7 +186,14 @@ namespace Playnite.VRMods
                     GameName = name,
                     Categories = new List<string> { _category },
                     SteamAppId = i.AppId,
-                    SourceUrls = new List<string> { $"https://store.steampowered.com/app/{i.AppId}/" },
+                    // Deliberately no page of its own. The only page a curator has for a game is the
+                    // game's Steam store page, and that is not evidence about the mod: a curator
+                    // recommends games, it does not publish pages about making them playable in VR.
+                    // Writing it as the game's source link sent users from a VR mod listing to a
+                    // storefront. Three things still work without it: matching keys on SteamAppId
+                    // (the entry's identity too, see VrModEntry.DecisionKeyComponent, so no stored
+                    // confirmation is lost), the review dialog opens the curator page instead, and
+                    // the library link becomes the curator page — the citation for the claim.
                     AdditionalInfo = string.IsNullOrWhiteSpace(i.Note) ? null : i.Note,
                 });
             }

@@ -127,5 +127,42 @@ namespace Playnite.VRMods
                 return false;
             return true;
         }
+
+        /// <summary>
+        /// Whether <paramref name="url"/> lives on the same site as <paramref name="siteUrl"/>.
+        /// Both must pass <see cref="IsSafeLinkUrl"/>, and the hosts must match ignoring case and
+        /// a leading "www." (a source publishes the same site under both spellings). A port counts
+        /// only when the URL states one: two URLs that leave the port out are one site even across
+        /// http and https, while an explicit port never matches a missing one — another port is
+        /// another machine as far as a link target goes.
+        /// False when either URL is missing or unparseable — when a link's home cannot be
+        /// established, it cannot be the source's own page.
+        /// </summary>
+        /// <param name="url">The scraped deep link candidate.</param>
+        /// <param name="siteUrl">The source's registered website.</param>
+        /// <returns>True only when both URLs are safe and their hosts are one site.</returns>
+        public static bool IsSameSiteHost(string? url, string? siteUrl)
+        {
+            if (!IsSafeLinkUrl(url) || !IsSafeLinkUrl(siteUrl))
+                return false;
+            var left = new Uri(url!);
+            var right = new Uri(siteUrl!);
+            // -1 for "no port stated", so http and https of one host compare equal while an
+            // explicit port still has to be met.
+            var leftPort = left.IsDefaultPort ? -1 : left.Port;
+            var rightPort = right.IsDefaultPort ? -1 : right.Port;
+            if (leftPort != rightPort)
+                return false;
+            var leftHost = WithoutWww(left.IdnHost);
+            var rightHost = WithoutWww(right.IdnHost);
+            return string.Equals(leftHost, rightHost, StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// A host with a leading "www." removed, so "www.vorpx.com" and "vorpx.com" compare equal.
+        /// Only that literal prefix is stripped: "www2.example.com" keeps its host intact.
+        /// </summary>
+        private static string WithoutWww(string host)
+            => host.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ? host.Substring(4) : host;
     }
 }

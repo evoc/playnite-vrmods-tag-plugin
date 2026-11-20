@@ -935,6 +935,14 @@ namespace Playnite.VRMods
         public bool IsEnabled { get; set; }
 
         /// <summary>
+        /// This source retires no link rows. A source that changed what it links to overrides this
+        /// so the rows its older versions wrote come off the games that still hold them — see
+        /// <see cref="RetiredLinkRule"/>.
+        /// </summary>
+        /// <inheritdoc />
+        public virtual IReadOnlyList<RetiredLinkRule> RetiredLinks => Array.Empty<RetiredLinkRule>();
+
+        /// <summary>
         /// Gets an identifier that changes when the source content changes.
         /// Parsers typically compute this as a SHA-256 hash of the fetched content.
         /// Used by VrModTagService.HasSourceChanged() to skip unnecessary network requests.

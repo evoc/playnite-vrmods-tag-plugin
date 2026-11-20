@@ -101,7 +101,7 @@ public class Link
 
 Steam App IDs are read by two helpers in `VrModTagService` —
 `TryGetSteamAppIdFromLink` (`source/VrModTagService.cs:958`) and
-`TryGetSteamAppIdFromProviderId` (`:993`) — and the library side
+`TryGetSteamAppIdFromProviderId` (`:987`) — and the library side
 collects them per game in `GetGameSteamAppIds`. What they accept:
 
 - A store link, `TryGetSteamAppIdFromLink`: an absolute http(s)
@@ -168,36 +168,38 @@ game.TagIds?.Remove(tag.Id);
 ### Steam App ID Match (Preferred)
 
 1. Five sources publish a Steam App ID per listing: Flat2VR, PCVR
-   Central, RototRobot, Steam Curator (`SteamCuratorParser.cs:233`
+   Central, RototRobot, Steam Curator (`SteamCuratorParser.cs:188`
    reads a curator recommendation's `AppId`, so a review is
-   keyed to a product and not to review prose), and UeVR Profiles
+   keyed to a product and not to review prose — and the curator's own link is the
+   curator page, never that store page), and UeVR Profiles
 2. The library side collects each game's ids from
    its `Links` (`store.steampowered.com/app/{id}/`)
    and, for a Steam-integrated game, its `GameId`
-3. Compare the ids: `SteamIdsMatch` (`source/VrModTagService.cs:1102`)
+3. Compare the ids: `SteamIdsMatch` (`source/VrModTagService.cs:1096`)
    pairs a listing with a game; `SteamIdsConflict` (`:1105`)
    refuses a pairing when both sides carry ids and none agree
 
 ```csharp
-// The candidate walk, in VrModTagService.cs. Four callers run it once
-// per listing - their call sites are :1399 FindSuggestedGames, :1645
-// RunFullScanAsync, :1861 BuildReviewMatchesFromCache, :4061
-// ReconcileSourceLinksForSource - each against the indexes
-// BuildGameIndex (:630) froze at the start of this scan, so a decision
-// taken in this scan's review dialog lands at the next scan.
-internal List<Game> FindGamesByIndex(VrModEntry entry)   // :1170-1272
+// The candidate walk, in VrModTagService.cs. Four callers run it once per
+// listing - FindSuggestedGames, RunFullScanAsync, BuildReviewMatchesFromCache
+// and ReconcileSourceLinksForSource - each against the indexes BuildGameIndex
+// (:624) froze at the start of this scan, so a decision taken in this scan's
+// review dialog lands at the next scan. (The callers are named, not numbered:
+// every line reference here had drifted by 100 to 600 lines within a week of
+// being written, and a wrong line number is worse than none.)
+internal List<Game> FindGamesByIndex(VrModEntry entry)   // :1164-1311
 {
-    // 1. (:1180-1189) A mapping somebody already decided
+    // 1. A mapping somebody already decided
     //    (_decidedListingGames, keyed by every listing key this entry
     //    could have): a confirmed pair survives a rename on the site.
-    // 2. (:1191-1201) Every game that claims this entry's Steam App ID,
+    // 2. Every game that claims this entry's Steam App ID,
     //    from the App ID index.
-    // 3. (:1203-1222) Every game sharing the entry's exact normalized
+    // 3. Every game sharing the entry's exact normalized
     //    name - unless SteamIdsConflict says the two are different
     //    products, in which case the pair is refused and the refusal is
     //    logged.
-    // 4. (:1224-1271) No exact name: the best-scoring 3-character-bucket
-    //    neighbour (GetMatchScore, VrModNameMatcher.cs:315), then every
+    // 4. No exact name: the best-scoring 3-character-bucket
+    //    neighbour (GetMatchScore, VrModNameMatcher.cs:316), then every
     //    game sharing THAT name - same conflict gate.
 }
 ```
