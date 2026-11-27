@@ -165,7 +165,7 @@ with no first-match-wins category collapse (see the RototRobot fix below).
 | Scan | Method | Trigger | Result surface |
 | --- | --- | --- | --- |
 | **Full scan** | `VrModTagService.RunFullScanAsync` | Scan timer; Playnite startup (`OnApplicationStarted` runs a full library scan at every start, `VrModTagPlugin.cs:266`); the **Full Scan** and **Review VR Mods** buttons, which live on the plugin's own settings page — Playnite shows that page under **Add-ons → Extensions settings** for this plugin; the plugin defines no Playnite `CommandDefinition`s | Timer → a Playnite **notification**. **Full Scan** → tags applied (no dialog). **Review VR Mods** → the **review dialog** built from the source cache (no scan); only a cold cache falls back to a full scan with `reviewAll: true`. |
-| **New-game scan** | `VrModTagService.ScanGamesAsync` (batch; `ScanGameAsync` is the one-game case) | Two paths: `OnLibraryUpdated` → `NotifyLibraryUpdated` (diff against the known-game baseline), **and** the service's own `Database.Games.ItemCollectionChanged` / `ItemUpdated` subscriptions (`VrModTagService.cs:2616-2617`) — the latter is what catches a manually added game, which never raises `OnLibraryUpdated`. Batches are debounced 5 s (`DefaultNewGameDebounceMs`); more than `MaxPerGameScanBatch = 20` games in one batch runs **one full library scan** instead of a per-game scan. | Pending matches are **auto-applied** (tags written now, no dialog) — a game appearing in the library is not a moment to interrupt the user. The decision stays **Pending** (defined below). |
+| **New-game scan** | `VrModTagService.ScanGamesAsync` (batch; `ScanGameAsync` is the one-game case) | Two paths: `OnLibraryUpdated` → `NotifyLibraryUpdated` (diff against the known-game baseline), **and** the service's own `Database.Games.ItemCollectionChanged` / `ItemUpdated` subscriptions (`VrModTagService.cs:2654-2655`) — the latter is what catches a manually added game, which never raises `OnLibraryUpdated`. Batches are debounced 5 s (`DefaultNewGameDebounceMs`); more than `MaxPerGameScanBatch = 20` games in one batch runs **one full library scan** instead of a per-game scan. | Pending matches are **auto-applied** (tags written now, no dialog) — a game appearing in the library is not a moment to interrupt the user. The decision stays **Pending** (defined below). |
 
 > **"Auto-applied", precisely (single-game scan):** the match's **tags** are
 > written to
@@ -338,7 +338,7 @@ sequenceDiagram
 
 `VrModNameMatcher` is a static utility shared by the service and
 every parser; it only scores name pairs. The tiers themselves are
-the service's lookup, `FindGamesByIndex` (`VrModTagService.cs:1168`),
+the service's lookup, `FindGamesByIndex` (`VrModTagService.cs:1206`),
 and **a plain substring is never a match** (this is what eliminates
 the sequel false positives — `hl` must not match "Half-Life 2"):
 
@@ -377,21 +377,42 @@ the sequel false positives — `hl` must not match "Half-Life 2"):
    has no link for is **not** stuck: name matching still runs below it.
 2. **Exact normalized name** — normalized source name equals normalized
    game name → every game sharing it, i.e. store duplicates, and the
-   lookup stops there (`:1190-1195`). Two normalizers are in play:
+   lookup stops there (`:1228-1233`). Two normalizers are in play:
    `VrModNameMatcher.Normalize` (strip VR suffixes, lowercase, `-`/`_` → space,
-   remove `.`, trim) and the index-side `VrModTagService.NormalizeForMatchFast`
-   (drops everything but letters/digits/spaces, collapses runs); the
-   differential test locks them to the same result. A library game is filed
-   under a **second** key as well: its name with a re-release tail taken off
+   remove `.`, fold accents, collapse runs of spaces, trim, then write a series
+   ordinal in digits) and the index-side `VrModTagService.NormalizeForMatchFast`
+   (the same result in one pass; the two steps that cannot be done in a single
+   pass are gated, so an ordinary ASCII name allocates nothing extra). The
+   differential test locks them to the same output — over names carrying accents,
+   ordinals and doubled spaces, not plain ASCII only.
+   The three canonicalizations are there to close keys, not to score better: on
+   2 520 real library names against 695 real catalog headings they change no
+   pairing outcome at all, and each one merges a pair of library entries that
+   were sitting on two keys (`Amnesia:  The Dark Descent`, `Trüberbrook`,
+   `Syberia 2` / `Syberia II`) so a listing reaches every copy of the product.
+   The ordinal rewrite has three exclusions and a value range, all measured on
+   those same names: `x` is never a numeral (13 names carry a standalone `x`,
+   `X-Wing` alone being four of them, and not one means twelve); a single roman
+   letter that *opens* a name is a word (`I am Fish`, not `1 am fish`); and `i`
+   *inside* a name is the pronoun, so `Before I Forget` and `I Have No Mouth And
+   I Must Scream` keep their spelling while `Ultima Underworld I` and
+   `Estranged: Act I` become `… 1`. What leaves `dlc`, `xl`, `dx`, `dc`, `il`,
+   `xd` and `civil` alone — every one of them a standalone token in a real name
+   here, every one spelled only in roman letters — is the 1-to-20 value range,
+   not a word list. Dots stay **deleted** rather than spaced:
+   that is what lets `Q.U.B.E. 2` and a heading written `QUBE 2 VR` land on one
+   key, and spacing them loses those pairings and gains none.
+   A library game is filed under a **second** key as well: its name with a
+   re-release tail taken off
    (`Tomb Raider: Game of the Year Edition` also sits under `tomb raider`,
    `:654-656`), and every game-driven path carries that key beside
-   the name as written — `NameScoreFor` (`:1065-1079`), `ScanGameCore`
-   (`:2293`), `GetVrModEntriesForGame` (`:2948`) and `ComputeTagsForGame`
-   (`:2987`) pass it to `EntryMatchesGame`. Only a tail of known re-release
-   wording qualifies (`VrModNameMatcher.EditionTailWords` `:638` and
+   the name as written — `NameScoreFor` (`:1103-1117`), `ScanGameCore`
+   (`:2331`), `GetVrModEntriesForGame` (`:2986`) and `ComputeTagsForGame`
+   (`:3025`) pass it to `EntryMatchesGame`. Only a tail of known re-release
+   wording qualifies (`VrModNameMatcher.EditionTailWords` `:841` and
    `StripEditionTail`
-(`VrModNameMatcher.cs:675`), through `VrModTagService.EditionTailVariant`
-   `:869`): the cut runs back from the last token, needs at least one edition
+(`VrModNameMatcher.cs:878`), through `VrModTagService.EditionTailVariant`
+   `:1072`): the cut runs back from the last token, needs at least one edition
    word, and stops at the first word that is not packaging (`Thief Gold`
    keeps `gold`, `Outer Wilds` keeps `wilds`). Extra key, never a rewrite,
    and on the library side only — measured on 695 listing titles against
@@ -404,27 +425,27 @@ the sequel false positives — `hl` must not match "Half-Life 2"):
 3. **Length-bounded Levenshtein** — only when no exact name hit: the
    best-scoring normalized name among the candidates sharing its 3-character
    bucket prefix (`HashBucketChars = 3`, `VrModTagService.cs:71`; the bucket
-   walk is `:1225-1231`), and every game sharing *that* name (`:1255-1266`).
+   walk is `:1263-1269`), and every game sharing *that* name (`:1293-1304`).
    Score = `1 - dist/maxLen`, returned only if >= the caller-supplied
    `threshold` (`FuzzyMatchThreshold`, default `0.80f`, validated to 0.50-1.00).
 
 `GetMatchScore(sourceName, gameName, threshold)`
-(`VrModNameMatcher.cs:316`) returns the best score of a pair,
+(`VrModNameMatcher.cs:519`) returns the best score of a pair,
 or `-1` for no match. `Normalize` / `StripVrSuffixes` clean
 names; `MakeDecisionKey` builds the persistence key (see below).
 
 The **other direction** — which cached entries could match a given
 game, which is what the review dialog and the reconciliation passes
 ask — does not scan names at all. It queries the catalog index
-(`GetCachedEntriesForGame`, `VrModTagService.cs:4599`) under each
-key the game goes by (`GameKeysForLookup`, `:4592-4598`: the name
+(`GetCachedEntriesForGame`, `VrModTagService.cs:4637`) under each
+key the game goes by (`GameKeysForLookup`, `:4630-4636`: the name
 as written, plus the name without a re-release tail where it has
 one), whose prunes are derivations of the matcher's own: a length
 window derived from the threshold and a letter-overlap upper bound
-(`LetterOverlapUpperBound`, `:4646`), each with a one-character
+(`LetterOverlapUpperBound`, `:4684`), each with a one-character
 margin so float rounding never decides a match, then
 `CanReachSimilarity` (`1 − |Δlength|/maxLen` must reach the
-threshold, `VrModNameMatcher.cs:374-381`).
+threshold, `VrModNameMatcher.cs:577-584`).
 
 The legitimate fuzzy matches (anything below a perfect 1.0) are
 *expected*, but they are never auto-accepted. What decides is
@@ -471,17 +492,22 @@ Rather than widen the tiers, this is a **second lookup with its
 own verdict and its own rules**, whose output is never applied:
 
 1. **`VrModTokenRun` / `CompareTokenRuns(sourceName, gameName)`**
-   (`VrModTokenRun.cs`, `VrModNameMatcher.cs:771`) classifies a normalized
+   (`VrModTokenRun.cs`, `VrModNameMatcher.cs:974`) classifies a normalized
    pair as `Unrelated` / `SameProduct` / `NeedsALook` / `DifferentProduct`.
    A *run* is the maximal leading stretch of word tokens that occurs in
    both names. Tokens are plain normalized strings from `TokenizeForMatch`
-   (`:733`) — letters, digits, apostrophes and hyphens survive, so a
-   trademark glyph stays inside one token (`3™` is a single token). A token
-   counts as an identifier when `ParseRomanNumeral` (`:463`, values 1 to
-   `MaxRomanNumeralValue` = 20 at `:384`) or `IsIdentifierToken` (`:754`)
-   accepts it. A side's leftovers are judged by `PackagingWords` (`:586`) or
+   (`:936`) — letters, digits, apostrophes and hyphens survive, so a
+   trademark glyph stays inside one token (`3™` is a single token). It tokenizes
+   `NormalizeWords` — `Normalize` without the ordinal rewrite — because that
+   rewrite is a key canonicalization: the tier parses ordinals itself
+   (`ParseRomanNumeral` sees that `III` and `3` are one value), and its
+   leftovers are quoted to a person, so they must be the words the library
+   actually has. A token
+   counts as an identifier when `ParseRomanNumeral` (`:666`, values 1 to
+   `MaxRomanNumeralValue` = 20 at `:587`) or `IsIdentifierToken` (`:957`)
+   accepts it. A side's leftovers are judged by `PackagingWords` (`:789`) or
    an ordinal whose value the other name carries too (the leftover test is
-   `LeftoversAreAgreedWording`, `:892`, through `IdentifierValueOf`, `:918`).
+   `LeftoversAreAgreedWording`, `:1095`, through `IdentifierValueOf`, `:1121`).
    - no shared run → `Unrelated`;
    - **carry filter** — after dropping packaging tokens, every leftover on
      a side must be contained in the *other* side's run: a listing whose
@@ -565,9 +591,9 @@ path like any other row, which is the only way a suggestion becomes a match.
 
 - **Key**: `VrModEntry.MakeDecisionKey(sourceId, gameId)` →
   `VrModNameMatcher.MakeDecisionKey` → `"{sourceId}||{identity}||{gameId:D}"`
-  (`VrModEntry.cs:488-489`, `VrModNameMatcher.cs:511-515`). In the service
+  (`VrModEntry.cs:488-489`, `VrModNameMatcher.cs:714-718`). In the service
   every read, write and clear of a mapping goes through one funnel,
-  `EntryDecisionKey` (`VrModTagService.cs:1975-1976`). The middle component is
+  `EntryDecisionKey` (`VrModTagService.cs:2013-2014`). The middle component is
   the listing's **identity** (`VrModEntry.DecisionKeyComponent`, computed
   at `VrModEntry.cs:451`, documented at `:418-450`): `steam:<App ID>`,
   else `url:<host><path>`, else the name. So a listing that keeps its
@@ -853,12 +879,16 @@ obvious from the code and that have caused bugs before.
   (whole-string `ToLowerInvariant`; used by `GetMatchScore`).
   `VrModTagService.NormalizeForMatchFast` is a deliberate single-pass
   StringBuilder fast path for the hot loops (`BuildGameIndex`,
-  `FindGamesByIndex`). The two agree for realistic (ASCII) names
-  but differ in allocation count and in Unicode lowercasing, so
-  merging them into one method would either add allocations to
-  the hot path or change the matcher's behavior. The differential
-  test `NormalizeForMatchFast_MatchesCanonicalNormalize` locks
-  them to identical output — if one changes, the test fails.
+  `FindGamesByIndex`). They must agree on every realistic name, accented
+  or plain — not ASCII only, which is all the lock used to cover. They
+  differ in allocation count and in Unicode lowercasing, so merging them
+  into one method would either add allocations to the hot path or change
+  the matcher's behavior. One thing exists purely to keep them equal: the
+  fast path folds accents *after* its single pass, so it re-collapses
+  spaces the fold un-separated (a combining mark standing between two
+  spaces). The differential test
+  `NormalizeForMatchFast_MatchesCanonicalNormalize` locks them to
+  identical output — if one changes, the test fails.
 - **Rules from the comparison plugin that were measured and deliberately not
   copied.** An out-of-repo A/B harness (not part of this repo) compiles this
   repo's `VrModNameMatcher` and `VrModTokenRun` next
@@ -882,24 +912,24 @@ obvious from the code and that have caused bugs before.
     `STAR WARS Battlefront II (Classic, 2005)`). Our token run treats
     a numeral disagreement as `DifferentProduct` on purpose, because
     `II`/`2` is exactly where a sequel or a remaster hides. Do not
-    confuse that with `ParseRomanNumeral` (`VrModNameMatcher.cs:463`,
-    used at `:429`): that is what *recognises* a numeral as an identifier
+    confuse that with `ParseRomanNumeral` (`VrModNameMatcher.cs:666`,
+    used at `:632`): that is what *recognises* a numeral as an identifier
     so the run can split on it — it never makes `II` and `2` equal.
   - **A stricter author peel.** Their rule peels the author tail only when
     the tail looks like a handle. On this data that stops peeling **157 of the
     267** ` by ` headings and drops **17 correct pairings while adding none**,
     and the collision it exists to prevent — two different products collapsing
     onto one key — occurred **0 times** across all 2 520 names. Not copied.
-  - **`mod` added to `PackagingWords`** (`VrModNameMatcher.cs:586` — the
+  - **`mod` added to `PackagingWords`** (`VrModNameMatcher.cs:789` — the
     set that lets a leftover word count as agreed wording rather than a
     second title). Measured the same day: the seven words the re-release tail
     strips (`edition`, `editions`, `goty`, `complete`, `gold`, `vanilla`,
     `directorial`) and its four fillers (`the`, `of`, `game`, `year`) are
     **already** in that set, so the stated reason for the change is already
     met. `mod` is not in it, and adding it would not change any match:
-    `VrModTagService.cs:1419` admits `SameProduct` **and** `NeedsALook`
-    as candidates, so a verdict only re-ranks a candidate (`:1484`) and
-    rewords the reason shown to the user (`:1544`). On this library a
+    `VrModTagService.cs:1457` admits `SameProduct` **and** `NeedsALook`
+    as candidates, so a verdict only re-ranks a candidate (`:1522`) and
+    rewords the reason shown to the user (`:1582`). On this library a
     standalone `mod` token appears in **6 of 2 520** names and every one of
     them is a real mod product (`Half-Life 2: VR Mod` and its two Episodes,
     `Just Cause 2: Multiplayer Mod`, `Killing Floor Mod: Defence Alliance 2`,
@@ -919,7 +949,7 @@ obvious from the code and that have caused bugs before.
   fetch exception and on a cancellation (`VrModTagService.cs:510`, `:518`, in
   `FetchAllEnabledSourcesAsync`), and `RunFullScanAsync` then skips stale-tag
   removal, feature reconciliation and source-link reconciliation for the
-  whole run (`:1696-1706`, links at `:1837`). A **disabled** source is not
+  whole run (`:1734-1744`, links at `:1875`). A **disabled** source is not
   fetched and is not counted. A source that returns **zero entries** is
   a success and gates nothing: its empty listing is cached like any other
   (`:345`) and it is surfaced as the `No data` health state in the settings
@@ -948,7 +978,7 @@ obvious from the code and that have caused bugs before.
   `MakeDecisionKey(sourceId, listingIdentity, gameId)` embeds the
   listing's App ID, else its page URL, and only a name when the
   source names listings (`DecisionKeyComponent`, `VrModEntry.cs:451`,
-  funnelled through `EntryDecisionKey`, `VrModTagService.cs:1975-1976`)
+  funnelled through `EntryDecisionKey`, `VrModTagService.cs:2013-2014`)
   plus the Playnite game's stable Id. So a source renaming a listing
 does **not** resurrect an answered question: `TryRekeyDecision`
 (`VrModTagSettings.cs:839-889`) moves the decision, its timestamp
@@ -966,7 +996,7 @@ does **not** resurrect an answered question: `TryRekeyDecision`
   the `DataGrid` (row). Rows are **one per mapping** — (source, listing
   identity, game Id) — and **category is in no key anywhere**: an entry
   with three categories is one row and one decision (`MakeReviewMatch`,
-  `VrModTagService.cs:2052`). Store duplicates (same name, different
+  `VrModTagService.cs:2090`). Store duplicates (same name, different
   Id) stay separate rows. `Status` is the single source of truth;
   `PersistedDecision`/`SavedAtUtc` are set once at construction.
 - **The settings ViewModel is not in its own file.** `VrModSettingsViewModel`
@@ -1283,7 +1313,7 @@ private void RunScheduledScan();                         // timer tick
   interactive install flow — but it is **not** the only add-game path:
   a game added through "Add game → Manually…" never raises it, and the
   service's own `Database.Games.ItemCollectionChanged` / `ItemUpdated`
-  subscriptions (`VrModTagService.cs:2616-2617`) are what catch those.
+  subscriptions (`VrModTagService.cs:2654-2655`) are what catch those.
 - The timer tick (`RunScheduledScan`) runs a background auto-scan
   (no progress window, notification only). The **Review VR Mods**
   button runs `RunReviewFromCache`: the review dialog opens straight

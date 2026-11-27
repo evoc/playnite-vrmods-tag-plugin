@@ -82,6 +82,81 @@ namespace PlayniteVRMods.Tests.Unit
             Assert.That(result, Is.EqualTo(expected));
         }
 
+        // Three canonicalizations the key needs to be a fair comparison, each pinned by the real name
+        // that motivated it (measured with PlayniteVRmods-dev/tools/NormRules over a real library).
+        //
+        // Spacing: stripping a word or turning a dash into a space leaves a hole in the key, and one
+        // game entered twice with different spacing then sits on two keys - a catalog entry tags one
+        // copy and the other is never tagged at all.
+        [TestCase("Amnesia:  The Dark Descent", "amnesia: the dark descent")]
+        [TestCase("Amnesia: The Dark Descent", "amnesia: the dark descent")]
+        [TestCase("STAR WARS Jedi Knight II - Jedi Outcast", "star wars jedi knight 2 jedi outcast")]
+        // Dots are DELETED, not spaced - the dotted-initial titles reach their own name no other way.
+        // "Q.U.B.E." glues to "qube", which is what a heading that writes the plain word reaches too;
+        // spaced, it would become "q u b e" and match nothing anybody writes.
+        [TestCase("Q.U.B.E. 2", "qube 2")]
+        [TestCase("D.I.P.R.I.P. Warm Up", "diprip warm up")]
+        // Accents: the store copy and the hand-added copy of one product share a key.
+        [TestCase("Trüberbrook", "truberbrook")]
+        [TestCase("Jötunnslayer: Hordes of Hel", "jotunnslayer: hordes of hel")]
+        // A series ordinal is written in digits, one direction only, so a library that spells it one way
+        // and a catalog that spells it the other both arrive at the same key.
+        [TestCase("Syberia II", "syberia 2")]
+        [TestCase("Syberia 2", "syberia 2")]
+        [TestCase("Final Fantasy IV", "final fantasy 4")]
+        [TestCase("Galactic Civilizations III (Test branch)", "galactic civilizations 3 (test branch)")]
+        // The exclusions, each one a real name from the library this was measured over.
+        // "x" is always the letter: 13 names carry a standalone "x" and none of them is a numeral.
+        [TestCase("Mega Man X", "mega man x")]
+        [TestCase("XCOM 2", "xcom 2")]
+        [TestCase("X-Wing", "x wing")]
+        // A single roman letter that OPENS a name is a word.
+        [TestCase("I am Fish", "i am fish")]
+        [TestCase("V for Vendetta", "v for vendetta")]
+        // A lone "i" earlier than the last token is the pronoun, so these two library names keep their
+        // spelling - "before 1 forget" is a key nobody should be comparing.
+        [TestCase("Before I Forget", "before i forget")]
+        [TestCase("I Have No Mouth And I Must Scream", "i have no mouth and i must scream")]
+        // Trailing, it is the ordinal it looks like; so is a lone "v" in the middle of a name.
+        [TestCase("Final Fantasy I", "final fantasy 1")]
+        [TestCase("Ultima  Underworld I", "ultima underworld 1")]
+        [TestCase("Estranged: Act I", "estranged: act 1")]
+        [TestCase("Samurai Shodown V Special", "samurai shodown 5 special")]
+        [TestCase("Grand Theft Auto V Enhanced", "grand theft auto 5 enhanced")]
+        // The value range, not the letter set, is what keeps the rest of the alphabet out. Every one of
+        // these is a standalone token made only of roman letters that a library really contains, and
+        // every one reads as over 20 - so none of them is touched.
+        [TestCase("RIOT - Civil Unrest", "riot civil unrest")]
+        [TestCase("Besiege + The Splintered Sea DLC", "besiege + the splintered sea dlc")]
+        [TestCase("Alex Kidd in Miracle World DX", "alex kidd in miracle world dx")]
+        [TestCase("Fibbage XL", "fibbage xl")]
+        [TestCase("Asterix & Obelix XXL", "asterix & obelix xxl")]
+        [TestCase("LEGO Batman 2 DC Super Heroes", "lego batman 2 dc super heroes")]
+        [TestCase("IL-2 Sturmovik: 1946", "il 2 sturmovik: 1946")]
+        [TestCase("Pokémon XD: Gale of Darkness VR", "pokemon xd: gale of darkness")]
+        public void Normalize_CanonicalizesSpacingAccentsAndOrdinals(string input, string expected)
+        {
+            var result = VrModNameMatcher.Normalize(input);
+            Assert.That(result, Is.EqualTo(expected));
+        }
+
+        /// <summary>
+        /// The key rule and the comparison tier must not hold two different ideas of what an ordinal is:
+        /// "Resident Evil VII" and "Resident Evil 7" are one product (one key, scored as itself), while
+        /// "Street Fighter 5" and "Street Fighter VI" are not (still refused by the identifier rule).
+        /// Both directions matter: the first is the gain, the second is the sequel guard still working
+        /// after the rewrite.
+        /// </summary>
+        [Test]
+        public void OrdinalInKey_AgreesWithTheIdentifierRule()
+        {
+            Assert.That(VrModNameMatcher.Normalize("Resident Evil VII"), Is.EqualTo("resident evil 7"));
+            Assert.That(VrModNameMatcher.GetMatchScore("Resident Evil VII", "Resident Evil 7", 0.8f),
+                Is.EqualTo(1.0f));
+            Assert.That(VrModNameMatcher.GetMatchScore("Street Fighter 5", "Street Fighter VI", 0.8f),
+                Is.LessThan(0f));
+        }
+
         [TestCase("", "")]
         [TestCase(null, "")]
         [TestCase("   ", "")]
@@ -568,11 +643,53 @@ namespace PlayniteVRMods.Tests.Unit
         [TestCase("  Game VR  ")]
         [TestCase("DOOM_Eternal-VR")]
         [TestCase("half.life.2.vr")]
+        // The lock has to cover the three canonicalizations too, or the two implementations may drift on
+        // exactly the names the new rules exist for.
+        [TestCase("Amnesia:  The Dark Descent")]
+        [TestCase("STAR WARS Jedi Knight II - Jedi Outcast")]
+        [TestCase("Trüberbrook")]
+        [TestCase("Syberia II")]
+        [TestCase("Final Fantasy I")]
+        [TestCase("I am Fish")]
+        [TestCase("Mega Man X")]
+        [TestCase("Galactic Civilizations III (Test branch)")]
+        // The shapes the rules are for are also the shapes a hand-written corpus forgets: a combining
+        // mark standing between two spaces (the fast path folds after its single pass, so it has to
+        // re-close that hole - without this case the two paths drift silently), a run of spaces behind a
+        // colon, an ordinal carrying its framing punctuation.
+        [TestCase("a \u0303 b")]
+        [TestCase("Amnesia:  The  Dark  Descent")]
+        [TestCase("Syberia  II:")]
+        [TestCase("Pokémon XD:  Gale of Darkness VR")]
+        [TestCase("IL-2 Sturmovik: 1946 by boilingmetal")]
+        [TestCase("Tomb Raider I-III Remastered Starring Lara Croft")]
+        [TestCase("YOU DON'T KNOW JACK: Vol. 1 XL")]
         [TestCase("")]
         public void NormalizeForMatchFast_MatchesCanonicalNormalize(string name)
         {
             Assert.That(VrModTagService.NormalizeForMatchFast(name),
                 Is.EqualTo(VrModNameMatcher.Normalize(name)));
+        }
+
+        // Normalizing a key that is already a key must change nothing. Each rule here rewrites text into
+        // a shape a later pass could match again (a roman run becomes digits - and digits are not roman,
+        // so it stops this time), and a key that moves under a second pass means the same game lands on
+        // two keys depending on how many times the code touched it.
+        [TestCase("Syberia II")]
+        [TestCase("Syberia 2")]
+        [TestCase("Amnesia:  The Dark Descent")]
+        [TestCase("Trüberbrook")]
+        [TestCase("a \u0303 b")]
+        [TestCase("Tomb Raider I-III Remastered Starring Lara Croft")]
+        [TestCase("Pokémon XD: Gale of Darkness VR")]
+        [TestCase("Q.U.B.E. 2")]
+        [TestCase("IL-2 Sturmovik: 1946")]
+        [TestCase("Before I Forget")]
+        public void Normalize_IsIdempotent(string name)
+        {
+            var once = VrModNameMatcher.Normalize(name);
+            Assert.That(VrModNameMatcher.Normalize(once), Is.EqualTo(once),
+                $"the key of '{name}' moved under a second pass: [{once}]");
         }
 
         #endregion

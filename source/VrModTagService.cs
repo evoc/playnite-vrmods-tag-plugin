@@ -825,27 +825,65 @@ namespace Playnite.VRMods
 
         /// <summary>
         /// Fast single-pass name normalization: strip VR suffixes, lowercase, map '-'/'_'
-        /// to ' ', drop '.', trim. Produces the SAME output as
-        /// <see cref="VrModNameMatcher.Normalize"/> for realistic (ASCII) names — locked by
-        /// the <c>NormalizeForMatchFast_MatchesCanonicalNormalize</c> differential test.
+        /// to ' ', drop '.', collapse space runs, trim - then fold accents and rewrite series
+        /// ordinals. Produces the SAME output as
+        /// <see cref="VrModNameMatcher.Normalize"/> — locked by the
+        /// <c>NormalizeForMatchFast_MatchesCanonicalNormalize</c> differential test, which is run
+        /// over names carrying accents, ordinals and doubled spaces, not only plain ASCII.
         /// Deliberately a single StringBuilder pass (no intermediate string allocations)
         /// because it runs in hot loops (per game in BuildGameIndex, per entry in
         /// FindGameByIndex). Do NOT delegate to <see cref="VrModNameMatcher.Normalize"/>
         /// (adds allocations to the hot path) or replace with it (changes the hot path's
         /// per-char lowercasing). The differential test is the intended "consolidation":
         /// it locks the two to agreement without a perf/behaviour regression.
+        ///
+        /// The two steps that cannot be done in one pass are gated so the hot path stays
+        /// allocation-free for an ordinary name: folding runs only when a character above ASCII
+        /// was seen, and ordinal rewriting runs only when a token of roman letters exists
+        /// (<see cref="VrModNameMatcher.CanonicalizeOrdinals"/> returns its argument unchanged
+        /// otherwise, without splitting).
         /// </summary>
         internal static string NormalizeForMatchFast(string name)
         {
             name = VrModNameMatcher.StripVrSuffixes(name);
             var sb = new StringBuilder(name.Length);
+            var sawNonAscii = false;
             foreach (var ch in name)
             {
-                if (ch == '-' || ch == '_') sb.Append(' ');
-                else if (ch == '.') { }
-                else sb.Append(char.ToLowerInvariant(ch));
+                if (ch == '-' || ch == '_')
+                {
+                    if (sb.Length > 0 && sb[sb.Length - 1] != ' ')
+                        sb.Append(' ');
+                }
+                else if (ch == '.')
+                {
+                    // Deleted, not spaced: the dotted-initial titles (Q.U.B.E., S.T.A.L.K.E.R.)
+                    // only reach their own name this way - see VrModNameMatcher.Normalize.
+                }
+                else if (ch == ' ')
+                {
+                    if (sb.Length > 0 && sb[sb.Length - 1] != ' ')
+                        sb.Append(' ');
+                }
+                else
+                {
+                    if (ch > '\u007f')
+                        sawNonAscii = true;
+                    sb.Append(char.ToLowerInvariant(ch));
+                }
             }
-            return sb.ToString().Trim();
+
+            var key = sb.ToString().Trim();
+            if (sawNonAscii)
+            {
+                // The fold cannot happen inside the pass, so it has to redo what it can un-separate: a
+                // combining mark standing between two spaces is dropped by the fold and leaves exactly
+                // the hole CollapseSpaces exists to close. Re-collapsing keeps this path equal to
+                // Normalize for accented names; an ASCII name never comes here at all.
+                key = VrModNameMatcher.CollapseSpaces(VrModNameMatcher.FoldDiacritics(key));
+            }
+
+            return VrModNameMatcher.CanonicalizeOrdinals(key);
         }
 
         /// <summary>
