@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text;
 
@@ -142,10 +143,12 @@ namespace Playnite.VRMods
         /// Pipeline steps (applied in order):
         /// 1. StripVrSuffixes() - Remove VR suffixes and author credits
         /// 2. ToLowerInvariant() - Convert to lowercase
-        /// 3. Replace("-", " ") - Replace dashes with spaces ("DOOM-Eternal" → "doom eternal")
-        /// 4. Replace("_", " ") - Replace underscores with spaces ("DOOM_Eternal" → "doom eternal")
-        /// 5. Replace(".", "") - Remove periods ("Half-Life 2.0" → "half life 20")
-        /// 6. Trim() - Remove leading/trailing whitespace
+        /// 3. "-" and "_" become spaces ("DOOM-Eternal" → "doom eternal"); "." is DELETED, not spaced
+        ///    - why that choice is load-bearing is written down below, under the examples
+        /// 4. FoldDiacritics() - Accents come off ("Trüberbrook" → "truberbrook")
+        /// 5. CollapseSpaces() - Runs of spaces left behind by steps 1 and 3 become one
+        /// 6. Trim()
+        /// 7. CanonicalizeOrdinals() - A series ordinal is written in digits ("Syberia II" → "syberia 2")
         ///
         /// Examples:
         ///   "DOOM Eternal" → "doom eternal"
@@ -153,19 +156,219 @@ namespace Playnite.VRMods
         ///   "Resident_Evil_7" → "resident evil 7"
         ///   "Fallout.4" → "fallout4"
         ///
+        /// Why a period is deleted rather than turned into a space, unlike the other punctuation:
+        /// dotted initials are how a whole family of titles is written - Q.U.B.E. 2, S.T.A.L.K.E.R.,
+        /// D.I.P.R.I.P., F.I.S.T. - and deleting the dots glues them into a single token, so
+        /// "Q.U.B.E. 2" reaches "qube 2" and a catalog heading that writes the plain word
+        /// ("QUBE 2 VR") lands on the same key. Spacing the dots instead produces "q u b e 2", which
+        /// matches nothing anybody writes. Measured against a real library: replacing the deletion with
+        /// spacing loses those pairings and gains none. The price of the choice is that a decimal point
+        /// glues digits too ("Outcast 1.1" → "outcast 11", "Half-Life 2.0" → "half life 20"), which
+        /// <see cref="IdentifierValuesDiffer"/> then reads as a different ordinal; every comparison gets
+        /// the same treatment on both sides, so the reading is consistent. It is written down here so
+        /// nobody "fixes" the rule the acronyms depend on.
+        ///
         /// This method is thread-safe and can be called from any context.
         /// Null input is treated as empty string.
         /// </summary>
         /// <param name="name">The game name to normalize.</param>
         /// <returns>The normalized name suitable for string comparison.</returns>
-        public static string Normalize(string name)
+        public static string Normalize(string name) => CanonicalizeOrdinals(NormalizeWords(name));
+
+        /// <summary>
+        /// Everything <see cref="Normalize"/> does except the ordinal rewrite - steps 1 to 6.
+        ///
+        /// This is what the word-by-word rules use (<see cref="TokenizeForMatch"/>, and through it the
+        /// token-run tier). Two reasons the ordinal rewrite stops at the key:
+        /// - that tier compares ordinals itself (<see cref="IsIdentifierToken"/> parses roman numerals
+        ///   against Arabic digits), so it never needed the rewrite to see that "III" and "3" are one
+        ///   ordinal; it only needed it to be told, and it already is;
+        /// - its output is quoted to a person. The review dialog says "the game name adds 'the elder
+        ///   scrolls iii goty edition'"; rewriting the words to "... scrolls 3 ..." would describe the
+        ///   user's own library inaccurately, and a reviewer decides on what the library actually says.
+        /// </summary>
+        internal static string NormalizeWords(string name)
         {
-            var normalized = StripVrSuffixes(name);
-            return normalized.ToLowerInvariant()
+            var normalized = StripVrSuffixes(name)
+                .ToLowerInvariant()
                 .Replace("-", " ")
                 .Replace("_", " ")
-                .Replace(".", "")
-                .Trim();
+                .Replace(".", "");
+            return CollapseSpaces(FoldDiacritics(normalized)).Trim();
+        }
+
+        /// <summary>
+        /// Turns a run of spaces into one space.
+        ///
+        /// <see cref="StripVrSuffixes"/> removes words from the middle of a name and step 3 of
+        /// <see cref="Normalize"/> turns every dash and underscore into a space, so keys are full of
+        /// holes ("STAR WARS Jedi Knight II - Jedi Outcast" keeps a three-space gap). The cost of not
+        /// closing them is not cosmetic: one game entered twice with different spacing ("Amnesia: The
+        /// Dark Descent", "Amnesia:  The Dark Descent") sits on two keys, so a catalog entry tags one
+        /// copy and the other is never tagged at all.
+        /// </summary>
+        internal static string CollapseSpaces(string key)
+        {
+            if (string.IsNullOrEmpty(key) || key.IndexOf(' ') < 0)
+                return key;
+
+            var sb = new StringBuilder(key.Length);
+            var previousWasSpace = false;
+            foreach (var ch in key)
+            {
+                if (ch == ' ')
+                {
+                    if (previousWasSpace)
+                        continue;
+
+                    previousWasSpace = true;
+                }
+                else
+                {
+                    previousWasSpace = false;
+                }
+
+                sb.Append(ch);
+            }
+
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Removes accents by decomposing to <see cref="NormalizationForm.FormD"/> and dropping the
+        /// combining marks, so "Jötunn" reaches "jotunn" and "Trüberbrook" reaches "truberbrook". Without
+        /// it, the two spellings of one product - which a library really does contain, when one copy came
+        /// from a store and one was added by hand - never share a key.
+        ///
+        /// Callers on a hot path should skip this for a name that is pure ASCII: it allocates.
+        /// Covers the decomposable accents (acute, grave, diaeresis, cedilla, macron...). It deliberately
+        /// leaves the letters that do not decompose (æ, œ, ß, ø) alone rather than guessing at a
+        /// transliteration; those need their own rule, with its own test, when a source proves the need.
+        /// </summary>
+        internal static string FoldDiacritics(string key)
+        {
+            if (string.IsNullOrEmpty(key))
+                return key;
+
+            var decomposed = key.Normalize(NormalizationForm.FormD);
+            var sb = new StringBuilder(decomposed.Length);
+            var dropped = false;
+            foreach (var ch in decomposed)
+            {
+                if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark)
+                {
+                    dropped = true;
+                    continue;
+                }
+
+                sb.Append(ch);
+            }
+
+            return dropped ? sb.ToString().Normalize(NormalizationForm.FormC) : key;
+        }
+
+        /// <summary>
+        /// Writes a series ordinal in digits, so the two spellings of one product reach one key:
+        /// "Syberia II" and "Syberia 2" both become "syberia 2". Applied to both sides of every
+        /// comparison, and in one direction only - digits are the canonical form - which is what lets one
+        /// rule cover a library that writes one spelling and a catalog that writes the other.
+        ///
+        /// The ordinal is recognised with <see cref="ParseRomanNumeral"/>, the same classifier the
+        /// comparison tier uses, so the key rule and the similarity rule cannot disagree about what an
+        /// ordinal is (see <see cref="IsIdentifierToken"/>).
+        ///
+        /// Three exclusions, all measured over a real library (2 520 names) and the live catalog
+        /// (695 headings):
+        /// - "x" is never rewritten. 13 names carry a standalone "x" and every one of them means the
+        ///   letter - "X-Wing" alone is 4 library names and a heading. Upstream's table omits it for the
+        ///   same reason.
+        /// - A single roman letter that OPENS the name is a word, not an ordinal: "I am Fish" must not
+        ///   become "1 am fish". Elsewhere a lone "v" is what it looks like - "Samurai Shodown V
+        ///   Special" -> "samurai shodown 5 special", "Grand Theft Auto V Enhanced" -> "... 5 ...".
+        /// - "i" in the MIDDLE of a name is the pronoun. "Before I Forget" and "I Have No Mouth And I
+        ///   Must Scream" are two of the library's own names, and "before 1 forget" is not a key worth
+        ///   comparing - while a trailing "i" IS an ordinal, so that position stays live
+        ///   ("Ultima Underworld I" -> "ultima underworld 1", "Estranged: Act I" -> "... act 1").
+        ///
+        /// The 1-to-20 value range, not the letter set, is what keeps the rest of the alphabet out:
+        /// built only from roman letters and standing alone in real names are also "dlc" (Besiege + The
+        /// Splintered Sea DLC), "dx" (Alex Kidd in Miracle World DX), "xl" (Fibbage XL), "xxl"
+        /// (Asterix &amp; Obelix XXL), "dc" (LEGO Batman 2 DC Super Heroes), "il" (IL-2 Sturmovik: 1946),
+        /// "xd" (Pokémon XD: Gale of Darkness) and "civil" (RIOT - Civil Unrest). Every one of them
+        /// reads as over 20, so every one is left exactly as written.
+        /// </summary>
+        internal static string CanonicalizeOrdinals(string key)
+        {
+            if (key.Length == 0 || !HasOrdinalToken(key))
+                return key;
+
+            var tokens = key.Split(' ');
+            var changed = false;
+            for (var t = 0; t < tokens.Length; t++)
+            {
+                var token = tokens[t];
+                if (token.Length == 0)
+                    continue;
+
+                var clean = CleanTokenForIdentifier(token);
+                if (clean.Length == 0 || clean == "x")
+                    continue;
+                // A lone "i" only counts as an ordinal at the end of a name; anywhere earlier it is the
+                // pronoun (see the exclusions above).
+                if (clean.Length == 1
+                    && (t == 0 || (clean == "i" && t != tokens.Length - 1)))
+                    continue;
+
+                var value = ParseRomanNumeral(clean);
+                if (!value.HasValue)
+                    continue;
+
+                // Rewrite only the middle of the token, keeping whatever bracket or colon framed it, so
+                // "iii:" becomes "3:" and "(ii)" stays bracketed. A token whose punctuation sits INSIDE
+                // its letters is not an ordinal written plainly, so anything that does not read as
+                // [framing][clean letters][framing] is left alone.
+                var start = 0;
+                while (start < token.Length && !char.IsLetterOrDigit(token[start]))
+                    start++;
+                var end = token.Length;
+                while (end > start && !char.IsLetterOrDigit(token[end - 1]))
+                    end--;
+                if (token.Substring(start, end - start) != clean)
+                    continue;
+
+                tokens[t] = token.Substring(0, start)
+                    + value.Value.ToString(CultureInfo.InvariantCulture)
+                    + token.Substring(end);
+                changed = true;
+            }
+
+            return changed ? string.Join(" ", tokens) : key;
+        }
+
+        /// <summary>
+        /// Whether the key contains a token that could be an ordinal at all: a run of roman letters
+        /// standing alone as a whole token (brackets and colons around it allowed), short enough to sit
+        /// under <see cref="MaxRomanNumeralValue"/>. Cheap and allocation-free, so
+        /// <see cref="CanonicalizeOrdinals"/> can skip splitting for the overwhelming majority of names.
+        /// </summary>
+        private static bool HasOrdinalToken(string key)
+        {
+            for (var i = 0; i < key.Length; i++)
+            {
+                if (Array.IndexOf(RomanLetters, key[i]) < 0)
+                    continue;
+
+                var start = i;
+                while (i < key.Length && Array.IndexOf(RomanLetters, key[i]) >= 0)
+                    i++;
+
+                var wholeTokenLeft = start == 0 || !char.IsLetterOrDigit(key[start - 1]);
+                var wholeTokenRight = i == key.Length || !char.IsLetterOrDigit(key[i]);
+                if (wholeTokenLeft && wholeTokenRight && i - start <= 5)
+                    return true;
+            }
+
+            return false;
         }
 
         /// <summary>
@@ -727,6 +930,10 @@ namespace Playnite.VRMods
         /// <see cref="CleanTokenForIdentifier"/> cleans it: only letters and digits survive. That glue
         /// is what makes "III:" and "2077" comparable to their neighbours — splitting on whitespace
         /// alone would leave "iii:" as a token that no ordinal rule recognises.
+        ///
+        /// It tokenizes <see cref="NormalizeWords"/>, not <see cref="Normalize"/>: the ordinal rewrite is
+        /// a key canonicalization, and these tokens are both what the token-run tier reasons over (it
+        /// parses ordinals itself) and what a reviewer is quoted back.
         /// </summary>
         /// <param name="name">A raw or normalized name.</param>
         /// <returns>Lowercase alphanumeric tokens, in order; empty when the name has no words.</returns>
@@ -736,7 +943,7 @@ namespace Playnite.VRMods
             if (string.IsNullOrEmpty(name))
                 return tokens;
 
-            foreach (var part in Normalize(name).Split(' '))
+            foreach (var part in NormalizeWords(name).Split(' '))
             {
                 var token = CleanTokenForIdentifier(part);
                 if (token.Length > 0)
